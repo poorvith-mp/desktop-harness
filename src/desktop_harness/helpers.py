@@ -153,12 +153,16 @@ def button_labels(app: str | int | None = None, limit: int = 40) -> list[str]:
 def media_transport(app: str | int | None = None) -> dict[str, Any]:
     """Inspect Play/Pause transport without clicking.
 
-    Returns {state: 'playing'|'paused'|'unknown', pause: bool, play: bool, labels: [...]}
+    Returns {state: 'playing'|'paused'|'unknown', pause: bool, play: bool,
+             transport_play: bool, row_play: bool, labels: [...]}
+
+    Transport Play = exact label "Play" (player bar).
+    Row Play = "Play <track name>" list rows (does NOT mean paused).
     Prefer this before any media click. Never spam Space — it toggles.
     """
     nodes = ax_snapshot(app, max_nodes=400, interactive_only=True)
     labs = []
-    has_pause = has_play = False
+    has_pause = has_transport_play = has_row_play = False
     for n in nodes:
         if n.get("role") != "AXButton":
             continue
@@ -169,24 +173,30 @@ def media_transport(app: str | int | None = None) -> dict[str, Any]:
         low = lab.lower()
         if low == "pause" or low.startswith("pause "):
             has_pause = True
-        if low == "play" or (low.startswith("play ") and "playlist" not in low
-                             and "play all" not in low and "playing" not in low):
-            # exact Play or "Play <track>" row buttons
-            if low == "play":
-                has_play = True
-    if has_pause and not has_play:
+        elif low == "play":
+            has_transport_play = True
+        elif (low.startswith("play ")
+              and "playlist" not in low
+              and "play all" not in low
+              and "playing" not in low):
+            # "Play <track>" row buttons — not the main transport
+            has_row_play = True
+    # State is driven by transport controls only
+    if has_pause and not has_transport_play:
         state = "playing"
-    elif has_play and not has_pause:
+    elif has_transport_play and not has_pause:
         state = "paused"
-    elif has_pause and has_play:
-        # row-level Play buttons + transport Pause is common on YT Music
+    elif has_pause and has_transport_play:
+        # both visible rare; trust Pause
         state = "playing"
     else:
         state = "unknown"
     return {
         "state": state,
         "pause": has_pause,
-        "play": has_play,
+        "play": has_transport_play,  # transport only (API stable)
+        "transport_play": has_transport_play,
+        "row_play": has_row_play,
         "labels": labs[:30],
     }
 
@@ -251,14 +261,18 @@ def click_text(
     if not frame:
         raise RuntimeError(f"matched {text!r} but no frame and AXPress failed: {hit}")
     # ensure app frontmost for coordinate click
-    if app:
+    if app is not None:
         try:
-            activate(str(app) if not isinstance(app, int) else (
-                find_app(app) or {}).get("name", "Finder"))
+            if isinstance(app, int):
+                # pid → resolve name, then activate
+                from AppKit import NSRunningApplication
+                ra = NSRunningApplication.runningApplicationWithProcessIdentifier_(app)
+                name = (ra.localizedName() if ra else None) or "Finder"
+                activate(name)
+            else:
+                activate(str(app))
         except Exception:
             pass
-    elif hit.get("frame"):
-        pass
     click_frame(frame)
     wait_stable()
     return {k: v for k, v in hit.items() if not k.startswith("_")}

@@ -119,7 +119,7 @@ Keep tools **small and safe** — voice models do better with 8–15 clear tools
 
 ```bash
 export XAI_API_KEY="…"
-cd ~/Developer/grok/experiments/desktop-harness/grok-20260810
+cd /path/to/desktop-harness
 source .venv/bin/activate
 pip install websockets sounddevice numpy   # mic + WS
 python scripts/voice_session.py            # full duplex

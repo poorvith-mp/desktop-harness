@@ -8,7 +8,7 @@ Command:
 
 ```bash
 export XAI_API_KEY="$(security find-generic-password -s xai-api-key -w 2>/dev/null)"
-cd "$HOME/Developer/grok/experiments/desktop-harness/grok-20260810"
+cd /path/to/desktop-harness   # your clone
 source .venv/bin/activate
 python scripts/voice_session.py
 ```

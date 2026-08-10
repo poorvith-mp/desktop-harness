@@ -66,18 +66,55 @@ def frontmost_app() -> dict[str, Any] | None:
     }
 
 
-def find_app(name_or_bundle: str) -> dict[str, Any] | None:
-    """Match by localized name (case-insensitive) or bundle id."""
-    q = name_or_bundle.strip().lower()
-    for a in list_apps():
+def find_app(name_or_bundle: str | int) -> dict[str, Any] | None:
+    """Match by localized name, bundle id, or pid.
+
+    Resolution order:
+      1. exact name or exact bundle id
+      2. name startswith query
+      3. best substring (shortest name wins — avoids "Text" → wrong app)
+      4. bundle id via NSRunningApplication
+    """
+    # pid path
+    if isinstance(name_or_bundle, int):
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(
+            name_or_bundle)
+        if not app:
+            return None
+        return {
+            "name": app.localizedName() or "",
+            "bundle_id": app.bundleIdentifier() or "",
+            "pid": int(app.processIdentifier()),
+            "active": bool(app.isActive()),
+            "hidden": bool(app.isHidden()),
+        }
+
+    q = (name_or_bundle or "").strip().lower()
+    if not q:
+        return None
+
+    apps = list_apps()
+    # 1) exact
+    for a in apps:
         if a["name"].lower() == q or a["bundle_id"].lower() == q:
             return a
-        if q in a["name"].lower():
-            return a
-    # Also try runningApplications with bundle id exact
-    apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(name_or_bundle)
-    if apps:
-        app = apps[0]
+    # 2) startswith name
+    starts = [a for a in apps if a["name"].lower().startswith(q)]
+    if len(starts) == 1:
+        return starts[0]
+    if len(starts) > 1:
+        starts.sort(key=lambda a: len(a["name"]))
+        return starts[0]
+    # 3) substring — prefer shortest name containing q (most specific)
+    subs = [a for a in apps if q in a["name"].lower() or q in a["bundle_id"].lower()]
+    if subs:
+        subs.sort(key=lambda a: (len(a["name"]), a["name"].lower()))
+        return subs[0]
+    # 4) bundle id launch lookup
+    ns_apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(
+        name_or_bundle)
+    if ns_apps:
+        app = ns_apps[0]
         return {
             "name": app.localizedName() or "",
             "bundle_id": app.bundleIdentifier() or "",
