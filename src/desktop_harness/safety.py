@@ -18,12 +18,15 @@ from pathlib import Path
 from typing import Any
 
 _SENSITIVE_NAME_SUBSTR = (
-    "1password", "bitwarden", "keychain", "lastpass", "keepass",
-    "dashlane", "nordpass", "enpass", "secrets", "wallet", "bank",
+    # "password" (not "1password") so Apple's own Passwords.app matches too —
+    # "1password" is not a substring of "Passwords".
+    "password", "bitwarden", "keychain", "lastpass", "keepass",
+    "dashlane", "nordpass", "enpass", "proton pass", "secrets", "wallet", "bank",
 )
 _SENSITIVE_BUNDLE_SUBSTR = (
     "1password", "bitwarden", "keychain", "lastpass", "keepass",
     "dashlane", "nordpass", "enpass",
+    "com.apple.passwords", "me.proton.pass",
 )
 
 _AUDIT = Path(os.environ.get(
@@ -64,16 +67,28 @@ def check_app_allowed(name: str, bundle_id: str = "") -> None:
 
 
 def check_frontmost_allowed() -> None:
-    """Block mutations when a sensitive app is already focused."""
+    """Block mutations when a sensitive app is already focused.
+
+    Fails closed: if the frontmost app cannot be determined we refuse rather
+    than proceed. Swallowing the error here meant a transient AX/NSWorkspace
+    failure silently disabled the gate for that call, which is the one moment
+    it most needs to hold.
+    """
     if allow_sensitive():
         return
+    from . import windows as winmod
     try:
-        from . import windows as winmod
         front = winmod.frontmost_app()
-    except Exception:
-        return
+    except Exception as e:
+        raise PermissionError(
+            f"refusing to act: cannot determine the frontmost app "
+            f"({type(e).__name__}: {e}). Set DH_ALLOW_SENSITIVE=1 to override."
+        ) from e
     if not front:
-        return
+        raise PermissionError(
+            "refusing to act: no frontmost app could be determined. "
+            "Set DH_ALLOW_SENSITIVE=1 to override."
+        )
     check_app_allowed(front.get("name") or "", front.get("bundle_id") or "")
 
 
