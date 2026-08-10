@@ -25,6 +25,14 @@ def main(argv: list[str] | None = None) -> None:
         _usage()
         return
 
+    if cmd in ("-V", "--version", "version"):
+        from . import __version__
+        print(f"desktop-harness {__version__}")
+        return
+
+    if cmd in ("check-update", "update-check"):
+        sys.exit(_check_update())
+
     if cmd in ("--doctor", "doctor"):
         from .admin import run_doctor
         sys.exit(run_doctor())
@@ -113,20 +121,69 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _usage() -> None:
+    from . import __version__
     print(
-        "desktop-harness — AX-first Mac control for coding agents (Grok Build & friends)\n\n"
+        f"desktop-harness {__version__} — Mac control for Grok Build (and shell agents)\n\n"
+        "  desktop-harness --version\n"
+        "  desktop-harness check-update  # compare to GitHub main (no auto-install)\n"
         "  desktop-harness --doctor\n"
-        "  desktop-harness selftest      # non-destructive release checks\n"
-        "  desktop-harness demo          # visible TextEdit + mouse test\n"
+        "  desktop-harness selftest\n"
+        "  desktop-harness demo\n"
         "  desktop-harness skill\n"
         "  desktop-harness daemon start [--bg]|stop|status\n"
-        "  desktop-harness <<'PY'\n"
-        "  print(labels()[:10])\n"
-        "  PY\n"
+        "  desktop-harness <<'PY' ... PY\n"
         "  desktop-harness -c 'print(mouse_pos())'\n\n"
-        "Not an MCP server. CLI + agent skill. Optional daemon keeps pyobjc warm.\n"
-        "Docs: README.md · HOW_IT_WORKS.md\n"
+        "Not an MCP server. CLI + agent skill.\n"
+        "Updates: git pull in your clone, then re-run ./install.sh if needed.\n"
+        "Docs: README.md · HOW_IT_WORKS.md · docs/OBSERVE-LOOP.md\n"
     )
+
+
+def _check_update() -> int:
+    """Tell the user if GitHub main is ahead. Does not auto-install (CLI is invisible)."""
+    from . import __version__
+    import json
+    import urllib.request
+
+    print(f"local version: {__version__}")
+    # Prefer git checkout state when available
+    root = Path(__file__).resolve().parent.parent.parent
+    git_dir = root / ".git"
+    local_sha = None
+    if git_dir.exists():
+        try:
+            local_sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                text=True,
+            ).strip()
+            print(f"local commit:  {local_sha[:10]}")
+        except Exception:
+            pass
+
+    url = "https://api.github.com/repos/xfreeze2/desktop-harness/commits/main"
+    try:
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github+json", "User-Agent": "desktop-harness"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+        remote_sha = data.get("sha") or ""
+        print(f"github main:   {remote_sha[:10]}")
+        if local_sha and remote_sha:
+            if local_sha == remote_sha:
+                print("status: up to date")
+                return 0
+            print("status: update available")
+            print("update:  cd <your-clone> && git pull && ./install.sh")
+            print("         (re-copy skill if you use Grok Build)")
+            return 0
+        print("status: compared versions only (no local git sha)")
+        print("update:  git pull in your clone, then ./install.sh")
+        return 0
+    except Exception as e:
+        print(f"status: could not reach GitHub ({type(e).__name__}: {e})")
+        print("manual: https://github.com/xfreeze2/desktop-harness")
+        return 1
 
 
 def _want_daemon() -> bool:

@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.4 — release candidate |
+| **Status** | v0.4.1 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
@@ -68,6 +68,21 @@ chmod +x install.sh && ./install.sh
 ```
 
 Manual path: see [install.md](./install.md).
+
+### Updating (no auto-update)
+
+This tool is a **local CLI** — it has no background app that pings the store.
+Agents only run it when a task needs Mac control. To update:
+
+```bash
+cd /path/to/desktop-harness
+git pull
+./install.sh          # refresh venv + PATH shim + Grok skill
+desktop-harness check-update   # optional: compare to GitHub main
+desktop-harness --version
+```
+
+There is **no silent auto-update** (by design — you control when code that can move your mouse changes).
 
 ### Permissions (once)
 
