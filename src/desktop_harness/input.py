@@ -1,0 +1,269 @@
+"""HID-level mouse and keyboard via CGEvent.
+
+Mouse control is real system-cursor control:
+  - CGWarpMouseCursorPosition moves the *visible* pointer
+  - CGEventPost delivers clicks/drags/keys apps actually receive
+"""
+from __future__ import annotations
+
+import math
+import time
+from typing import Any
+
+import Quartz
+
+# Keycodes (US layout) for common chords
+_KEYCODES = {
+    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+    "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
+    "3": 20, "4": 21, "6": 22, "5": 23, "equal": 24, "9": 25, "7": 26, "minus": 27,
+    "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "return": 36, "l": 37,
+    "j": 38, "k": 40, "semicolon": 41, "n": 45, "m": 46, "tab": 48, "space": 49,
+    "grave": 50, "delete": 51, "escape": 53, "command": 55, "shift": 56,
+    "option": 58, "control": 59, "right": 124, "left": 123, "down": 125, "up": 126,
+    "cmd": 55, "alt": 58, "ctrl": 59, "enter": 36, "esc": 53, "backspace": 51,
+}
+
+# Optional agent-cursor overlay (set by helpers when available)
+_overlay = None
+
+
+def set_overlay(overlay) -> None:
+    """Attach an optional visual agent cursor (cursor_overlay module)."""
+    global _overlay
+    _overlay = overlay
+
+
+def mouse_pos() -> dict[str, float]:
+    """Current system pointer location in global screen points."""
+    ev = Quartz.CGEventCreate(None)
+    p = Quartz.CGEventGetLocation(ev)
+    return {"x": float(p.x), "y": float(p.y)}
+
+
+def _post_mouse(event_type: int, x: float, y: float, button=Quartz.kCGMouseButtonLeft):
+    pt = Quartz.CGPointMake(float(x), float(y))
+    ev = Quartz.CGEventCreateMouseEvent(None, event_type, pt, button)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+
+def _warp(x: float, y: float):
+    """Move the visible system cursor (what the human sees)."""
+    Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(float(x), float(y)))
+    # Associate next mouse event with warp so apps don't jump-correct
+    Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+    if _overlay is not None:
+        try:
+            _overlay.move(x, y)
+        except Exception:
+            pass
+
+
+def move_to(
+    x: float,
+    y: float,
+    *,
+    duration: float = 0.08,
+    steps: int | None = None,
+) -> dict[str, float]:
+    """Animate the real mouse pointer to (x, y). Returns final position.
+
+    Defaults favor agent speed (short path). Use duration=0.3+ for visible demos.
+    Set DH_MOUSE_INSTANT=1 to warp with zero animation.
+    """
+    import os
+    if os.environ.get("DH_MOUSE_INSTANT", "").lower() in ("1", "true", "yes"):
+        duration = 0
+    start = mouse_pos()
+    x0, y0 = start["x"], start["y"]
+    dist = math.hypot(x - x0, y - y0)
+    if dist < 2:
+        _warp(x, y)
+        _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+        return {"x": float(x), "y": float(y)}
+    if steps is None:
+        # fewer steps: ~1 per 20px, max 24
+        steps = max(1, min(24, int(dist / 20) or 1))
+    if duration <= 0 or steps <= 1:
+        _warp(x, y)
+        _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+        return {"x": float(x), "y": float(y)}
+    dt = duration / steps
+    for i in range(1, steps + 1):
+        t = i / steps
+        # ease-in-out
+        te = t * t * (3 - 2 * t)
+        xi = x0 + (x - x0) * te
+        yi = y0 + (y - y0) * te
+        _warp(xi, yi)
+        _post_mouse(Quartz.kCGEventMouseMoved, xi, yi)
+        time.sleep(dt)
+    return {"x": float(x), "y": float(y)}
+
+
+def move_by(dx: float, dy: float, **kwargs) -> dict[str, float]:
+    p = mouse_pos()
+    return move_to(p["x"] + dx, p["y"] + dy, **kwargs)
+
+
+def wiggle(amplitude: float = 12.0, cycles: int = 2, duration: float = 0.35):
+    """Small wiggle at current position — agent is thinking / about to act."""
+    origin = mouse_pos()
+    ox, oy = origin["x"], origin["y"]
+    n = max(8, cycles * 8)
+    dt = duration / n
+    for i in range(n):
+        ang = (i / n) * cycles * 2 * math.pi
+        xi = ox + amplitude * math.sin(ang)
+        yi = oy + amplitude * 0.4 * math.cos(ang)
+        _warp(xi, yi)
+        _post_mouse(Quartz.kCGEventMouseMoved, xi, yi)
+        time.sleep(dt)
+    _warp(ox, oy)
+    _post_mouse(Quartz.kCGEventMouseMoved, ox, oy)
+    return origin
+
+
+def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
+          move: bool = True, duration: float = 0.06):
+    """Left click at global screen coordinates. Moves the real pointer first.
+
+    duration default is short (0.06s) for agent speed; pass higher for demos.
+    """
+    if move:
+        move_to(x, y, duration=duration)
+    else:
+        _warp(x, y)
+        _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    time.sleep(0.02)
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    if double:
+        time.sleep(0.05)
+        _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+        _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    time.sleep(settle)
+
+
+def right_click(x: float, y: float, settle: float = 0.05, move: bool = True):
+    if move:
+        move_to(x, y, duration=0.12)
+    else:
+        _warp(x, y)
+        _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    time.sleep(0.02)
+    _post_mouse(Quartz.kCGEventRightMouseDown, x, y, Quartz.kCGMouseButtonRight)
+    _post_mouse(Quartz.kCGEventRightMouseUp, x, y, Quartz.kCGMouseButtonRight)
+    time.sleep(settle)
+
+
+def click_frame(frame: dict, *, double: bool = False):
+    """Click center of {x,y,w,h}."""
+    x = frame["x"] + frame["w"] / 2
+    y = frame["y"] + frame["h"] / 2
+    click(x, y, double=double)
+
+
+def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
+         duration: float = 0.35):
+    """Drag with visible pointer motion."""
+    move_to(x1, y1, duration=0.12)
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x1, y1)
+    dt = duration / max(steps, 1)
+    for i in range(1, steps + 1):
+        t = i / steps
+        te = t * t * (3 - 2 * t)
+        x = x1 + (x2 - x1) * te
+        y = y1 + (y2 - y1) * te
+        _warp(x, y)
+        pt = Quartz.CGPointMake(x, y)
+        ev = Quartz.CGEventCreateMouseEvent(
+            None, Quartz.kCGEventLeftMouseDragged, pt, Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        time.sleep(dt)
+    _post_mouse(Quartz.kCGEventLeftMouseUp, x2, y2)
+    time.sleep(0.03)
+
+
+def scroll(dx: int = 0, dy: int = 3, x: float | None = None, y: float | None = None):
+    """Scroll wheel at optional location (moves pointer there first)."""
+    if x is not None and y is not None:
+        move_to(x, y, duration=0.1)
+    ev = Quartz.CGEventCreateScrollWheelEvent(
+        None, Quartz.kCGScrollEventUnitLine, 2, int(dy), int(dx))
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+
+def _key_event(keycode: int, down: bool, flags: int = 0):
+    ev = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
+    if flags:
+        Quartz.CGEventSetFlags(ev, flags)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+
+def key(name: str, *, settle: float = 0.03):
+    """Press a named key (return, escape, tab, …)."""
+    code = _KEYCODES.get(name.lower())
+    if code is None:
+        raise ValueError(f"unknown key: {name!r}")
+    _key_event(code, True)
+    _key_event(code, False)
+    time.sleep(settle)
+
+
+def hotkey(*keys: str, settle: float = 0.05):
+    """Chord like hotkey('cmd', 's') or hotkey('cmd', 'shift', 't')."""
+    parts = [k.lower() for k in keys]
+    flags = 0
+    mods = []
+    if "cmd" in parts or "command" in parts:
+        flags |= Quartz.kCGEventFlagMaskCommand
+        mods.append(_KEYCODES["cmd"])
+    if "shift" in parts:
+        flags |= Quartz.kCGEventFlagMaskShift
+        mods.append(_KEYCODES["shift"])
+    if "alt" in parts or "option" in parts:
+        flags |= Quartz.kCGEventFlagMaskAlternate
+        mods.append(_KEYCODES["option"])
+    if "ctrl" in parts or "control" in parts:
+        flags |= Quartz.kCGEventFlagMaskControl
+        mods.append(_KEYCODES["control"])
+    main = [p for p in parts if p not in {
+        "cmd", "command", "shift", "alt", "option", "ctrl", "control"}]
+    if not main:
+        raise ValueError("hotkey needs a non-modifier key")
+    main_code = _KEYCODES.get(main[-1])
+    if main_code is None:
+        # single character
+        ch = main[-1]
+        if len(ch) == 1:
+            main_code = _KEYCODES.get(ch.lower())
+        if main_code is None:
+            raise ValueError(f"unknown key in hotkey: {main[-1]!r}")
+    for m in mods:
+        _key_event(m, True, flags)
+    _key_event(main_code, True, flags)
+    _key_event(main_code, False, flags)
+    for m in reversed(mods):
+        _key_event(m, False, flags)
+    time.sleep(settle)
+
+
+def type_text(text: str, *, delay: float = 0.008):
+    """Type unicode via CGEvent keyboard with unicode string."""
+    for ch in text:
+        if ch == "\n":
+            key("return")
+            continue
+        if ch == "\t":
+            key("tab")
+            continue
+        # Unicode input
+        ev_down = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
+        Quartz.CGEventKeyboardSetUnicodeString(ev_down, len(ch), ch)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_down)
+        ev_up = Quartz.CGEventCreateKeyboardEvent(None, 0, False)
+        Quartz.CGEventKeyboardSetUnicodeString(ev_up, len(ch), ch)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_up)
+        if delay:
+            time.sleep(delay)

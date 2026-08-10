@@ -1,0 +1,9 @@
+#!/bin/sh
+# Dev launcher: run the working tree without installing.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$DIR/.venv/bin/python" ]; then
+  PYTHON="$DIR/.venv/bin/python"
+else
+  PYTHON="python3"
+fi
+PYTHONPATH="$DIR/src${PYTHONPATH:+:$PYTHONPATH}" exec "$PYTHON" -m desktop_harness.run "$@"

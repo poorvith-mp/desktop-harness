@@ -1,0 +1,337 @@
+"""Agent-facing helpers — pre-imported into every desktop-harness script.
+
+Efficiency order:
+  1. shell / APIs (outside this package)
+  2. ax_snapshot / find / click_text / set_field  (AX-first)
+  3. screenshot + coordinate click               (fallback)
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+from . import ax as _ax
+from . import capture as _capture
+from . import input as _input
+from . import windows as _windows
+
+CORE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CORE_DIR.parent.parent
+AGENT_WORKSPACE = Path(
+    os.environ.get("DH_AGENT_WORKSPACE", REPO_ROOT / "agent-workspace"))
+
+
+# --- re-exports ---
+
+list_apps = _windows.list_apps
+list_windows = _windows.list_windows
+frontmost_app = _windows.frontmost_app
+find_app = _windows.find_app
+activate = _windows.activate
+open_app = _windows.open_app
+
+ax_snapshot = _ax.ax_snapshot
+find = _ax.find
+focused_element = _ax.focused_element
+
+screenshot = _capture.screenshot
+
+# Mouse — real system pointer (you can watch it move)
+mouse_pos = _input.mouse_pos
+move_to = _input.move_to
+move_by = _input.move_by
+wiggle = _input.wiggle
+def click(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    _safety.audit("click", {"args": args[:2]})
+    return _input.click(*args, **kwargs)
+
+
+def right_click(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    return _input.right_click(*args, **kwargs)
+
+
+def click_frame(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    return _input.click_frame(*args, **kwargs)
+
+
+def drag(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    return _input.drag(*args, **kwargs)
+
+
+def scroll(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    return _input.scroll(*args, **kwargs)
+
+
+def key(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    _safety.audit("key", {"key": args[0] if args else None})
+    return _input.key(*args, **kwargs)
+
+
+def hotkey(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    _safety.audit("hotkey", {"keys": args})
+    return _input.hotkey(*args, **kwargs)
+
+
+def type_text(*args, **kwargs):
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    _safety.audit("type_text", {"n": len(args[0]) if args else 0})
+    return _input.type_text(*args, **kwargs)
+
+
+def enable_agent_cursor(enabled: bool = True):
+    """Show a floating colored circle that follows agent mouse moves."""
+    if not enabled:
+        try:
+            from . import cursor_overlay as co
+            co.hide()
+        except Exception:
+            pass
+        _input.set_overlay(None)
+        return False
+    try:
+        from . import cursor_overlay as co
+        p = mouse_pos()
+        co.show(p["x"], p["y"])
+        _input.set_overlay(co)
+        return True
+    except Exception as e:
+        # overlay optional — mouse still works
+        print(f"agent_cursor unavailable: {e}")
+        return False
+
+
+def wait(seconds: float = 0.4):
+    time.sleep(seconds)
+
+
+def wait_stable(seconds: float = 0.2):
+    """Short settle after an action (fixed sleep; keep small for speed)."""
+    time.sleep(seconds)
+
+
+def ensure_daemon() -> bool:
+    """Return True if warm daemon is available (start is a separate CLI step)."""
+    from . import daemon as d
+    return d.is_running()
+
+
+def button_labels(app: str | int | None = None, limit: int = 40) -> list[str]:
+    """Labels of visible buttons only (handy for player/toolbars)."""
+    nodes = ax_snapshot(app, max_nodes=300, interactive_only=True)
+    out, seen = [], set()
+    for n in nodes:
+        if n.get("role") != "AXButton":
+            continue
+        lab = (n.get("label") or n.get("title") or "").strip()
+        if not lab or lab in seen:
+            continue
+        seen.add(lab)
+        out.append(lab)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def media_transport(app: str | int | None = None) -> dict[str, Any]:
+    """Inspect Play/Pause transport without clicking.
+
+    Returns {state: 'playing'|'paused'|'unknown', pause: bool, play: bool, labels: [...]}
+    Prefer this before any media click. Never spam Space — it toggles.
+    """
+    nodes = ax_snapshot(app, max_nodes=400, interactive_only=True)
+    labs = []
+    has_pause = has_play = False
+    for n in nodes:
+        if n.get("role") != "AXButton":
+            continue
+        lab = (n.get("label") or n.get("title") or "").strip()
+        if not lab:
+            continue
+        labs.append(lab)
+        low = lab.lower()
+        if low == "pause" or low.startswith("pause "):
+            has_pause = True
+        if low == "play" or (low.startswith("play ") and "playlist" not in low
+                             and "play all" not in low and "playing" not in low):
+            # exact Play or "Play <track>" row buttons
+            if low == "play":
+                has_play = True
+    if has_pause and not has_play:
+        state = "playing"
+    elif has_play and not has_pause:
+        state = "paused"
+    elif has_pause and has_play:
+        # row-level Play buttons + transport Pause is common on YT Music
+        state = "playing"
+    else:
+        state = "unknown"
+    return {
+        "state": state,
+        "pause": has_pause,
+        "play": has_play,
+        "labels": labs[:30],
+    }
+
+
+def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
+    """If transport shows Pause, do nothing. If Play, press it once. Never Space."""
+    from . import safety as _safety
+    status = media_transport(app)
+    _safety.audit("ensure_media_playing", status)
+    if status["state"] == "playing":
+        return {"action": "noop", **status}
+    if status["state"] == "paused":
+        hit = click_text("Play", app=app, role="AXButton", exact=True)
+        wait_stable(0.3)
+        again = media_transport(app)
+        return {"action": "pressed_play", "before": status, "after": again, "hit": hit}
+    raise RuntimeError(
+        f"cannot determine transport state; button sample: {status.get('labels')}"
+    )
+
+
+def click_text(
+    text: str,
+    app: str | int | None = None,
+    *,
+    role: str | None = None,
+    prefer_ax_press: bool = True,
+    exact: bool = False,
+) -> dict[str, Any]:
+    """Find best match and activate it (AXPress preferred, else click center).
+
+    exact=True: only accept title/label equal to text (case-insensitive).
+    Prefer role=\"AXButton\" for toolbar/player controls.
+    """
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    if app:
+        _safety.check_app_allowed(str(app))
+    _safety.audit("click_text", {"text": text, "app": app, "exact": exact})
+    hits = _ax.find(text, app=app, role=role, max_results=12)
+    if exact:
+        q = text.strip().lower()
+        hits = [
+            h for h in hits
+            if (h.get("title") or "").strip().lower() == q
+            or (h.get("label") or "").strip().lower() == q
+        ]
+    if not hits:
+        # show what's visible to help the agent
+        sample = _ax.public_nodes(
+            _ax.ax_snapshot(app, max_nodes=40, interactive_only=True, include_el=True))
+        labels = [n.get("label") or n.get("title") or n.get("role") for n in sample[:25]]
+        raise RuntimeError(
+            f"no AX match for {text!r} (role={role!r}, exact={exact}). visible sample: {labels}")
+    hit = hits[0]
+    el = hit.get("_el")
+    if prefer_ax_press and el is not None:
+        if _ax.press_element(el):
+            wait_stable()
+            return {k: v for k, v in hit.items() if not k.startswith("_")}
+    frame = hit.get("frame")
+    if not frame:
+        raise RuntimeError(f"matched {text!r} but no frame and AXPress failed: {hit}")
+    # ensure app frontmost for coordinate click
+    if app:
+        try:
+            activate(str(app) if not isinstance(app, int) else (
+                find_app(app) or {}).get("name", "Finder"))
+        except Exception:
+            pass
+    elif hit.get("frame"):
+        pass
+    click_frame(frame)
+    wait_stable()
+    return {k: v for k, v in hit.items() if not k.startswith("_")}
+
+
+def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, Any]:
+    """Find a text field by nearby label/title and set its value."""
+    hits = _ax.find(text, app=app, max_results=10)
+    # prefer text fields
+    ordered = sorted(
+        hits,
+        key=lambda h: (0 if "Text" in (h.get("role") or "") else 1, -h.get("score", 0)),
+    )
+    if not ordered:
+        raise RuntimeError(f"no field matching {text!r}")
+    hit = ordered[0]
+    el = hit.get("_el")
+    if el is not None and _ax.set_value(el, value):
+        wait_stable()
+        return {k: v for k, v in hit.items() if not k.startswith("_")}
+    # fallback: click + type
+    if hit.get("frame"):
+        click_frame(hit["frame"])
+        wait(0.15)
+        hotkey("cmd", "a")
+        type_text(value)
+        wait_stable()
+        return {k: v for k, v in hit.items() if not k.startswith("_")}
+    raise RuntimeError(f"could not set field {text!r}")
+
+
+def labels(app: str | int | None = None, limit: int = 40) -> list[str]:
+    """Quick list of visible labels for debugging."""
+    nodes = ax_snapshot(app, max_nodes=limit * 3, interactive_only=True)
+    out = []
+    seen = set()
+    for n in nodes:
+        lab = (n.get("label") or "").strip()
+        if not lab or lab in seen:
+            continue
+        seen.add(lab)
+        out.append(f"{n.get('role','')}: {lab}")
+        if len(out) >= limit:
+            break
+    return out
+
+
+def screen_info(app: str | None = None) -> dict[str, Any]:
+    front = frontmost_app()
+    wins = list_windows()
+    if app:
+        wins = [w for w in wins if app.lower() in w["app"].lower()]
+    return {
+        "frontmost": front,
+        "windows": wins[:12],
+        "window_count": len(wins),
+    }
+
+
+def _load_agent_helpers():
+    p = AGENT_WORKSPACE / "agent_helpers.py"
+    if not p.exists():
+        return {}
+    spec = importlib.util.spec_from_file_location("desktop_harness_agent_helpers", p)
+    if spec is None or spec.loader is None:
+        return {}
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return {k: getattr(mod, k) for k in dir(mod) if not k.startswith("_")}
+
+
+def namespace() -> dict[str, Any]:
+    """Globals injected into scripts."""
+    ns = {k: v for k, v in globals().items() if not k.startswith("_")}
+    ns.update(_load_agent_helpers())
+    return ns
