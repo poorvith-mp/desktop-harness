@@ -69,7 +69,22 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`
 - Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
-- Meta: `wait`, `wait_stable`
+- Meta: `wait`, `wait_stable`, `verify(note, app?)` — closes the loop after a
+  UI-changing action (see below)
+
+## Verify, don't assume (mandatory after anything that changes the screen)
+
+`click_text`, `set_field`, and similar returning without an exception means
+the AX call succeeded — **not** that the screen now shows what you expected.
+After any action meant to change what's on screen, call `verify("what you
+expected to happen")` and **read the screenshot path it returns** before
+telling the user the step worked. You have vision; the harness's job is to
+hand you current pixels + state, not to guess on your behalf. This is cheap
+(one extra call) and it is the difference between "probably clicked
+something" and actually knowing.
+
+Skip this for pure discovery calls (`labels`, `ax_snapshot`) that don't
+change anything.
 
 ## Media / players (learn from mistakes)
 
@@ -106,6 +121,17 @@ run demo → screencapture → read the PNG → fix → demo again
 See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
 
 Presence UI: blue while moving; brief **red** pulse on click; bottom neon “Agent controlling” bar.
+
+**For any change to presence itself specifically:** a single still screenshot
+proves nothing — the overlay is a moving, stateful thing, and its worst
+failure mode is disappearing exactly when something else steals window
+focus (which is normal, constant behavior in real agent use, not an edge
+case). Before calling presence work done, you must demo a sequence that
+includes a click landing on a *different* app plus several seconds of pure
+idle afterward, and confirm via multiple frames that the halo/banner are
+still there after both. A demo that never lets focus leave your own
+process will pass even when the real thing is broken — this exact gap
+shipped a bug once already.
 
 ## Docs in repo
 

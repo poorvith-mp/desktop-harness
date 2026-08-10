@@ -6,7 +6,7 @@
 
 | Control | Behavior |
 |---------|----------|
-| `DH_ALLOW_SENSITIVE` | Default off. Blocks open/focus and mutations while password-manager-like apps are targeted or frontmost. |
+| `DH_ALLOW_SENSITIVE` | Default off. Blocks open/focus, mutations (click/type/hotkey), and **screenshots** while password-manager-like apps are targeted or frontmost — a screenshot of a visible password is as much a leak as clicking into the field. |
 | Audit log | `~/.desktop-harness/audit.jsonl` for key mutations |
 | Warm daemon | Unix socket **mode 0600** + **token** at `~/.desktop-harness/daemon.token` (0600). Requests without the token are rejected. |
 

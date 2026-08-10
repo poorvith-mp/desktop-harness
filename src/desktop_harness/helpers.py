@@ -130,12 +130,21 @@ def hide_agent_presence():
 
 
 def wait(seconds: float = 0.4):
+    """Pause — presence-safe: keeps the agent-presence overlay from
+    sinking behind other windows during the wait, instead of a raw sleep
+    that leaves it unattended. Prefer this over time.sleep() in scripts."""
+    try:
+        from . import presence
+        presence.keep_alive(seconds)
+        return
+    except Exception:
+        pass
     time.sleep(seconds)
 
 
 def wait_stable(seconds: float = 0.2):
-    """Short settle after an action (fixed sleep; keep small for speed)."""
-    time.sleep(seconds)
+    """Short settle after an action (presence-safe; keep small for speed)."""
+    wait(seconds)
 
 
 def ensure_daemon() -> bool:
@@ -341,6 +350,44 @@ def screen_info(app: str | None = None) -> dict[str, Any]:
         "windows": wins[:12],
         "window_count": len(wins),
     }
+
+
+def verify(note: str = "", app: str | int | None = None) -> dict[str, Any]:
+    """Close the loop after a UI-changing action.
+
+    The calling agent has vision — the missing piece was never "add a
+    vision model," it was handing that agent the actual pixels + state
+    instead of moving on and assuming the last click worked. Call this
+    after click_text/set_field/anything that's supposed to change the
+    screen, then Read the screenshot path it returns before deciding the
+    step succeeded. Cheap AX state is included too, for checks that don't
+    need a look (e.g. did this label's value change).
+
+    `note` is free text describing what you expected to happen — it goes
+    into the audit log next to the actual state, so a later pass (by you
+    or another agent) can compare intent vs. outcome without re-deriving
+    context.
+    """
+    result: dict[str, Any] = {"note": note}
+    try:
+        result["frontmost"] = frontmost_app()
+    except Exception as e:
+        result["frontmost_error"] = str(e)
+    try:
+        result["labels"] = labels(app, limit=25)
+    except Exception as e:
+        result["labels_error"] = str(e)
+    try:
+        result["screenshot"] = screenshot(app=app if isinstance(app, str) else None)
+    except Exception as e:
+        result["screenshot_error"] = str(e)
+    try:
+        from . import safety as _safety
+        _safety.audit("verify", {"note": note, "app": app,
+                                  "frontmost": result.get("frontmost")})
+    except Exception:
+        pass
+    return result
 
 
 def _load_agent_helpers():

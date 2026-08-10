@@ -30,7 +30,7 @@ _auto_presence = True  # wire presence module on first motion if enabled
 
 
 def set_overlay(overlay) -> None:
-    """Attach visual presence (presence / cursor_overlay module)."""
+    """Attach visual presence (presence module)."""
     global _overlay
     _overlay = overlay
 

@@ -21,6 +21,14 @@ _active = False
 _last_cg: tuple[float, float] | None = None
 _mode = "blue"  # blue | red
 
+# IMPORTANT — main thread only. AppKit asserts on non-main-thread window
+# calls and hard-aborts the whole process (SIGABRT, unrecoverable, no
+# Python exception to catch) — verified by trying a background "keepalive"
+# thread here and watching it crash desktop-harness every single run. Do
+# not reach for threading to solve idle-persistence; use keep_alive()
+# below to pump in small increments from whatever thread is already
+# calling into presence (which must be the main thread).
+
 # Halo canvas — circle centered on cursor tip
 _SIZE = 40.0
 _FLASH = 48.0
@@ -222,40 +230,17 @@ def _place_halo(cg_x: float, cg_y: float, size: float | None = None):
     from AppKit import NSMakeRect
     _halo.setFrame_display_(NSMakeRect(ox, oy, size, size), False)
     _halo.orderFrontRegardless()
+    if _banner is not None:
+        _banner.orderFrontRegardless()
     _last_cg = (cg_x, cg_y)
-
-
-def _set_mode(mode: str):
-    global _mode
-    _mode = mode
-    if _halo is None:
-        return
-    view = _halo.contentView()
-    if view is not None and hasattr(view, "mode"):
-        view.mode = mode
-        view.setNeedsDisplay_(True)
-
-
-def _banner_layout():
-    """Fully above Dock; room for neon pad; high window level."""
-    from AppKit import NSScreen
-    screen = NSScreen.mainScreen()
-    pad = 20.0
-    w, h = 252.0, 38.0
-    if screen is None:
-        return 400.0, 80.0, w + 2 * pad, h + 2 * pad, w, h, pad
-    vf = screen.visibleFrame()
-    # Clear of dock icons: visibleFrame bottom + comfortable lift
-    margin = pad + 56.0
-    pill_x = vf.origin.x + (vf.size.width - w) / 2.0
-    pill_y = vf.origin.y + margin
-    return (
-        pill_x - pad,
-        pill_y - pad,
-        w + 2 * pad,
-        h + 2 * pad,
-        w, h, pad,
-    )
+    # Window-server frame/order commands only flush when the accessory
+    # app's run loop actually spins. This app never calls NSApp.run(), so
+    # without a pump here the overlay silently stops updating the instant
+    # focus moves to another app (e.g. any click that lands elsewhere) —
+    # every high-frequency caller (move/drag) funnels through this
+    # function, so pumping here covers all of them from one place.
+    # Idle gaps between calls are covered by keep_alive(), not here.
+    _pump(n=2, seconds=0.004)
 
 
 def _make_banner():
@@ -361,15 +346,7 @@ def _make_banner():
     root.addSubview_(pill)
 
     panel.setContentView_(root)
-    panel.setFrameOrigin_((px, py) if False else (0, 0))
-    # set full frame
-    from AppKit import NSMakeRect
-    px, py, pw, ph, *_ = (*_banner_layout()[:4],)
-    # unpack properly
-    layout = _banner_layout()
-    panel.setFrame_display_(
-        NSMakeRect(layout[0], layout[1], layout[2], layout[3]), True
-    )
+    panel.setFrame_display_(NSMakeRect(px, py, pw, ph), True)
     _banner = panel
     return panel
 
@@ -394,6 +371,37 @@ def _banner_layout():
     )
 
 
+def keep_alive(seconds: float) -> None:
+    """Hold presence visible through an idle wait — call this instead of
+    time.sleep() while an action script pauses with presence active.
+
+    Chunks the wait and re-asserts ordering + pumps between chunks, all on
+    the calling (main) thread. A background thread sounds like the right
+    tool for "keep something alive while I sleep," and an earlier version
+    of this file did exactly that — it crashed the whole process every
+    time (AppKit hard-aborts on window calls from a non-main thread; no
+    Python exception, nothing to catch). This is the safe version: same
+    effect, zero threads.
+    """
+    if not _active:
+        time.sleep(max(0.0, seconds))
+        return
+    remaining = max(0.0, seconds)
+    step = 0.12
+    while remaining > 0:
+        chunk = min(step, remaining)
+        time.sleep(chunk)
+        remaining -= chunk
+        try:
+            if _halo is not None:
+                _halo.orderFrontRegardless()
+            if _banner is not None:
+                _banner.orderFrontRegardless()
+            _pump(n=1, seconds=0.003)
+        except Exception:
+            pass
+
+
 def show(x: float | None = None, y: float | None = None) -> bool:
     global _active, _mode
     if not enabled():
@@ -414,7 +422,6 @@ def show(x: float | None = None, y: float | None = None) -> bool:
         _mode = "blue"
         _make_halo(_SIZE)
         _set_halo_mode("blue")
-        _place_halo(x, y, _SIZE)
 
         global _banner
         if _banner is not None:
@@ -427,6 +434,7 @@ def show(x: float | None = None, y: float | None = None) -> bool:
         ban.orderFrontRegardless()
 
         _active = True
+        _place_halo(x, y, _SIZE)
         _pump(n=10, seconds=0.03)
         return True
     except Exception as e:
@@ -485,6 +493,7 @@ def click_flash(x: float, y: float) -> None:
 
 def hide() -> None:
     global _halo, _banner, _active, _last_cg
+    _active = False
     try:
         if _halo is not None:
             _halo.orderOut_(None)
@@ -494,7 +503,6 @@ def hide() -> None:
             _banner = None
     except Exception:
         pass
-    _active = False
     _last_cg = None
     _pump(n=3, seconds=0.01)
 

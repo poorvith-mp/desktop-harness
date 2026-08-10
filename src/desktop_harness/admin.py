@@ -54,7 +54,7 @@ def run_doctor() -> int:
         front = windows.frontmost_app()
         if front:
             nodes = ax.ax_snapshot(front["pid"], max_nodes=20, interactive_only=True)
-            check("AX snapshot (frontmost app)", len(nodes) >= 0,
+            check("AX snapshot (frontmost app)", len(nodes) > 0,
                   f"{front['name']}: {len(nodes)} nodes")
         else:
             check("AX snapshot (frontmost app)", False, "no frontmost app")

@@ -1,7 +1,9 @@
 """Window / display capture — pixel fallback when AX is not enough."""
 from __future__ import annotations
 
+import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +39,20 @@ def screenshot(
 
     Returns path to PNG. Prefer app/window scope over full desktop.
     """
-    path = Path(path or TMP / "capture.png")
+    from . import safety as _safety
+    if app:
+        _safety.check_app_allowed(app)
+    else:
+        # Unscoped (window_id given, or full display) — a targeted app
+        # name already got checked above; an untargeted capture can still
+        # grab a password manager's visible contents if it's frontmost,
+        # same risk class as the click/type gate already covers.
+        _safety.check_frontmost_allowed()
+    if path is None:
+        # Unique per call — concurrent agent steps (or two calls in the
+        # same script) used to clobber a single shared capture.png.
+        path = TMP / f"capture-{os.getpid()}-{time.time_ns()}.png"
+    path = Path(path)
     wid = window_id
     if wid is None and app:
         for w in winmod.list_windows():
@@ -64,6 +79,7 @@ def screenshot(
             Quartz.kCGWindowImageNominalResolution,
         )
     _save_cgimage(image, path)
+    _safety.audit("screenshot", {"app": app, "window_id": wid, "path": str(path)})
     return str(path)
 
 
