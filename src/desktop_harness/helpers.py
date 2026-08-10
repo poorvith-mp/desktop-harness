@@ -97,10 +97,10 @@ def type_text(*args, **kwargs):
 
 
 def enable_agent_cursor(enabled: bool = True):
-    """Show / hide agent presence (ring + hands-off pill).
+    """Show / hide agent presence (synced halo + bottom neon bar).
 
-    Default: presence auto-enables on mouse moves when DH_PRESENCE=1 (default).
-    Call enable_agent_cursor(False) or set DH_PRESENCE=0 to disable.
+    Design: ONE real system cursor + soft glow halo (never a second arrow).
+    Blue while moving; brief red flash on click. DH_PRESENCE=0 to disable.
     """
     try:
         from . import presence
@@ -111,6 +111,7 @@ def enable_agent_cursor(enabled: bool = True):
         p = mouse_pos()
         ok = presence.show(p["x"], p["y"])
         if ok:
+            # Overlay uses presence.move(x,y) on every warp — same coords as cursor
             _input.set_overlay(presence)
         return ok
     except Exception as e:

@@ -1,17 +1,12 @@
-"""Agent presence — observe-improve loop design (v soft).
+"""Agent presence — one real cursor + synced glow (no second arrow).
 
-What screenshots showed was wrong:
-  - Banner sat in app chrome / near notch → looked like a tab, not a status chip
-  - Custom cursor too weak / system cursor still visible → double offset lag
-  - Glow felt harsh or laggy when chasing mouseLocation
+Design rules (from observe loop):
+  - NEVER draw a second pointer shape (dual-cursor lag is unusable)
+  - System cursor stays; we only draw a soft HALO locked to the warp target
+  - Move = cool blue glow; click = brief red flash, then blue again
+  - Bottom neon bar fully above Dock (window level + margin + pad math)
 
-Fixes:
-  - Banner: bottom-center of visibleFrame (always clear of notch + menu)
-  - Hide system cursor via NSCursor.hide() while active
-  - Place overlay on CG warp target (no chase lag)
-  - Soft arrow + gentle blue glow only
-
-DH_PRESENCE=0 to disable.
+DH_PRESENCE=0 disables everything.
 """
 from __future__ import annotations
 
@@ -19,16 +14,16 @@ import os
 import time
 from typing import Any
 
-_ring = None
+_halo = None
 _banner = None
 _app = None
 _active = False
-_cursor_hidden = False
+_last_cg: tuple[float, float] | None = None
+_mode = "blue"  # blue | red
 
-_CANVAS = 52.0
-# Tip of drawn arrow inside the canvas (Cocoa y-up)
-_HOT_X = 6.0
-_HOT_Y = 44.0
+# Halo canvas — circle centered on cursor tip
+_SIZE = 40.0
+_FLASH = 48.0
 
 
 def enabled() -> bool:
@@ -53,7 +48,7 @@ def _ensure_app():
     return _app
 
 
-def _pump(n: int = 3, seconds: float = 0.008):
+def _pump(n: int = 4, seconds: float = 0.01):
     try:
         from AppKit import NSDate, NSDefaultRunLoopMode
         app = _ensure_app()
@@ -73,74 +68,13 @@ def _pump(n: int = 3, seconds: float = 0.008):
         pass
 
 
-def _hide_system_cursor():
-    """Hide the *global* system cursor (NSCursor.hide only affects our process)."""
-    global _cursor_hidden
-    try:
-        import Quartz
-        # CGDisplayHideCursor is reference-counted; hide until not visible
-        for _ in range(4):
-            try:
-                if hasattr(Quartz, "CGCursorIsVisible") and not Quartz.CGCursorIsVisible():
-                    break
-            except Exception:
-                pass
-            Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
-        _cursor_hidden = True
-    except Exception:
-        try:
-            from AppKit import NSCursor
-            NSCursor.hide()
-            _cursor_hidden = True
-        except Exception:
-            pass
-
-
-def _show_system_cursor():
-    global _cursor_hidden
-    if not _cursor_hidden:
-        return
-    try:
-        import Quartz
-        # Match hide count (we may have called hide multiple times)
-        for _ in range(6):
-            try:
-                if hasattr(Quartz, "CGCursorIsVisible") and Quartz.CGCursorIsVisible():
-                    break
-            except Exception:
-                pass
-            Quartz.CGDisplayShowCursor(Quartz.CGMainDisplayID())
-    except Exception:
-        try:
-            from AppKit import NSCursor
-            NSCursor.unhide()
-        except Exception:
-            pass
-    _cursor_hidden = False
-
-
-def _cg_to_panel_origin(cg_x: float, cg_y: float) -> tuple[float, float]:
-    """CG warp point → Cocoa origin so drawn tip sits on the hot-spot."""
-    from AppKit import NSScreen
-    main = NSScreen.mainScreen()
-    if main is None:
-        return cg_x - _HOT_X, -cg_y
-    mf = main.frame()
-    cocoa_x = float(mf.origin.x) + float(cg_x) - _HOT_X
-    cocoa_y = float(mf.origin.y) + float(mf.size.height) - float(cg_y) - _HOT_Y
-    return cocoa_x, cocoa_y
-
-
 def _style_panel(panel, boost: int = 0):
-    from AppKit import NSColor, NSStatusWindowLevel, NSFloatingWindowLevel, NSPopUpMenuWindowLevel
-    # Must sit above the Dock (status level alone is not enough on many Macs)
+    from AppKit import NSColor, NSPopUpMenuWindowLevel, NSFloatingWindowLevel
     try:
-        panel.setLevel_(int(NSPopUpMenuWindowLevel) + 5 + boost)
+        # Above Dock / most chrome
+        panel.setLevel_(int(NSPopUpMenuWindowLevel) + 8 + boost)
     except Exception:
-        try:
-            panel.setLevel_(int(NSStatusWindowLevel) + 30 + boost)
-        except Exception:
-            panel.setLevel_(int(NSFloatingWindowLevel) + 50 + boost)
+        panel.setLevel_(100 + boost)
     panel.setOpaque_(False)
     panel.setBackgroundColor_(NSColor.clearColor())
     panel.setIgnoresMouseEvents_(True)
@@ -155,7 +89,21 @@ def _style_panel(panel, boost: int = 0):
         pass
 
 
-class _PointerView:
+def _cg_to_center_origin(cg_x: float, cg_y: float, size: float) -> tuple[float, float]:
+    """Center a size×size panel on the CGEvent hot-spot (cursor tip)."""
+    from AppKit import NSScreen
+    main = NSScreen.mainScreen()
+    if main is None:
+        return cg_x - size / 2, -cg_y - size / 2
+    mf = main.frame()
+    # CG: top-left of primary, y down → Cocoa: bottom-left, y up
+    cocoa_cx = float(mf.origin.x) + float(cg_x)
+    cocoa_cy = float(mf.origin.y) + float(mf.size.height) - float(cg_y)
+    return cocoa_cx - size / 2.0, cocoa_cy - size / 2.0
+
+
+class _HaloView:
+    """Soft disc under the real system cursor — not a second arrow."""
     _cls = None
 
     @classmethod
@@ -164,127 +112,153 @@ class _PointerView:
             return cls._cls
         from AppKit import NSView
 
-        class AgentPointerView(NSView):
-            mode = "normal"
+        class HaloView(NSView):
+            mode = "blue"
 
             def isFlipped(self):
                 return False
 
             def drawRect_(self, rect):
-                from AppKit import NSBezierPath, NSColor, NSRectFill
+                from AppKit import NSBezierPath, NSColor, NSRectFill, NSGradient
+                from Foundation import NSMakePoint
 
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
 
-                # Slim system-like arrow
-                pts = [
-                    (6.0, 44.0),   # tip
-                    (6.0, 18.0),
-                    (12.0, 23.5),
-                    (17.5, 10.0),
-                    (20.5, 11.5),
-                    (14.0, 24.5),
-                    (21.0, 24.5),
-                ]
-                path = NSBezierPath.bezierPath()
-                path.moveToPoint_(pts[0])
-                for p in pts[1:]:
-                    path.lineToPoint_(p)
-                path.closePath()
+                b = self.bounds()
+                cx = b.size.width / 2.0
+                cy = b.size.height / 2.0
+                # Leave a clear hole in the center so the real cursor tip stays sharp
+                outer_r = min(b.size.width, b.size.height) / 2.0 - 1.0
+                inner_r = 5.0
 
-                # Always cool blue — never red/orange (that read as errors)
-                if self.mode == "click":
-                    # Brief warm/red pulse on click (then back to blue)
-                    gr, gg, gb = 0.98, 0.32, 0.28
-                    layers = ((14, 0.07), (8, 0.12), (4, 0.18))
+                if self.mode == "red":
+                    # Click: soft warm red ring
+                    rings = (
+                        (outer_r, 0.98, 0.30, 0.25, 0.22),
+                        (outer_r * 0.72, 0.98, 0.35, 0.28, 0.16),
+                        (outer_r * 0.48, 1.0, 0.45, 0.35, 0.10),
+                    )
                 else:
-                    # Moving / idle: soft blue
-                    gr, gg, gb = 0.30, 0.55, 0.98
-                    layers = ((16, 0.04), (10, 0.07), (6, 0.11), (3, 0.15))
+                    # Move/idle: soft blue ring
+                    rings = (
+                        (outer_r, 0.30, 0.55, 1.0, 0.20),
+                        (outer_r * 0.72, 0.35, 0.60, 1.0, 0.14),
+                        (outer_r * 0.48, 0.45, 0.70, 1.0, 0.09),
+                    )
 
-                for width, alpha in layers:
-                    g = path.copy()
-                    g.setLineWidth_(float(width))
+                for r, rr, gg, bb, aa in rings:
+                    path = NSBezierPath.bezierPath()
+                    path.appendBezierPathWithOvalInRect_(
+                        ((cx - r, cy - r), (2 * r, 2 * r))
+                    )
+                    # punch hole
+                    hole = NSBezierPath.bezierPath()
+                    hole.appendBezierPathWithOvalInRect_(
+                        ((cx - inner_r, cy - inner_r), (2 * inner_r, 2 * inner_r))
+                    )
+                    path.appendBezierPath_(hole)
                     try:
-                        g.setLineJoinStyle_(1)
-                        g.setLineCapStyle_(1)
+                        path.setWindingRule_(1)  # even-odd
                     except Exception:
                         pass
                     NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                        gr, gg, gb, alpha
+                        rr, gg, bb, aa
                     ).set()
-                    g.stroke()
+                    path.fill()
 
-                # Soft white body
-                NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    1.0, 1.0, 1.0, 0.96
-                ).set()
-                path.fill()
+                # Thin bright rim (subtle neon edge)
+                rim = NSBezierPath.bezierPath()
+                rim.appendBezierPathWithOvalInRect_(
+                    ((cx - outer_r + 0.5, cy - outer_r + 0.5),
+                     (2 * (outer_r - 0.5), 2 * (outer_r - 0.5)))
+                )
+                rim.setLineWidth_(1.2)
+                if self.mode == "red":
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        1.0, 0.40, 0.30, 0.55
+                    ).set()
+                else:
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        0.45, 0.75, 1.0, 0.45
+                    ).set()
+                rim.stroke()
 
-                # Whisper of cool edge — not bold
-                path.setLineWidth_(0.6)
-                NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    gr, gg, gb, 0.28
-                ).set()
-                path.stroke()
-
-        cls._cls = AgentPointerView
+        cls._cls = HaloView
         return cls._cls
 
 
-def _make_pointer_panel():
-    global _ring
+def _make_halo(size: float | None = None):
+    global _halo
     from AppKit import NSMakeRect, NSPanel, NSWindowStyleMaskBorderless
+    size = size or _SIZE
     _ensure_app()
-    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, _CANVAS, _CANVAS),
-        NSWindowStyleMaskBorderless,
-        2,
-        False,
-    )
-    _style_panel(panel)
-    View = _PointerView.view_class()
-    view = View.alloc().initWithFrame_(NSMakeRect(0, 0, _CANVAS, _CANVAS))
-    view.mode = "normal"
-    panel.setContentView_(view)
-    _ring = panel
-    return panel
+    if _halo is None:
+        panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, size, size),
+            NSWindowStyleMaskBorderless,
+            2,
+            False,
+        )
+        _style_panel(panel)
+        _halo = panel
+    View = _HaloView.view_class()
+    view = View.alloc().initWithFrame_(NSMakeRect(0, 0, size, size))
+    view.mode = _mode
+    _halo.setContentView_(view)
+    from AppKit import NSMakeRect as R
+    # keep size
+    o = _halo.frame().origin
+    _halo.setFrame_display_(R(o.x, o.y, size, size), False)
+    return _halo
 
 
-def _place_at_cg(cg_x: float, cg_y: float):
-    if _ring is None:
+def _place_halo(cg_x: float, cg_y: float, size: float | None = None):
+    global _last_cg
+    size = size or _SIZE
+    if _halo is None:
+        _make_halo(size)
+    ox, oy = _cg_to_center_origin(cg_x, cg_y, size)
+    from AppKit import NSMakeRect
+    _halo.setFrame_display_(NSMakeRect(ox, oy, size, size), False)
+    _halo.orderFrontRegardless()
+    _last_cg = (cg_x, cg_y)
+
+
+def _set_mode(mode: str):
+    global _mode
+    _mode = mode
+    if _halo is None:
         return
-    ox, oy = _cg_to_panel_origin(cg_x, cg_y)
-    _ring.setFrameOrigin_((ox, oy))
-    _ring.orderFrontRegardless()
+    view = _halo.contentView()
+    if view is not None and hasattr(view, "mode"):
+        view.mode = mode
+        view.setNeedsDisplay_(True)
 
 
 def _banner_layout():
-    """Full panel rect in Cocoa coords — pill + neon pad fully inside visibleFrame.
-
-    Past bug: origin was (pill_x - pad, pill_y - pad) with pill_y near dock,
-    so half the glow sat under the Dock / off-screen.
-    """
+    """Fully above Dock; room for neon pad; high window level."""
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
-    pad = 18.0
-    w, h = 248.0, 36.0
+    pad = 20.0
+    w, h = 252.0, 38.0
     if screen is None:
-        return 400.0, 60.0, w, h, pad
+        return 400.0, 80.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    # Sit clearly above the Dock / bottom chrome (half-buried was the #1 bug)
-    margin = pad + 52.0
+    # Clear of dock icons: visibleFrame bottom + comfortable lift
+    margin = pad + 56.0
     pill_x = vf.origin.x + (vf.size.width - w) / 2.0
     pill_y = vf.origin.y + margin
-    panel_x = pill_x - pad
-    panel_y = pill_y - pad
-    panel_w = w + pad * 2
-    panel_h = h + pad * 2
-    return panel_x, panel_y, panel_w, panel_h, w, h, pad
+    return (
+        pill_x - pad,
+        pill_y - pad,
+        w + 2 * pad,
+        h + 2 * pad,
+        w, h, pad,
+    )
 
 
 def _make_banner():
-    """Bottom status chip: dark glass + strong neon cyan border glow (fully on-screen)."""
     global _banner
     from AppKit import (
         NSColor, NSMakeRect, NSPanel, NSTextField, NSFont, NSView,
@@ -293,33 +267,33 @@ def _make_banner():
     from Quartz import CGColorCreateGenericRGB
 
     _ensure_app()
-    panel_x, panel_y, panel_w, panel_h, w, h, pad = _banner_layout()
+    px, py, pw, ph, w, h, pad = _banner_layout()
     panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, panel_w, panel_h),
+        NSMakeRect(0, 0, pw, ph),
         NSWindowStyleMaskBorderless,
         2,
         False,
     )
-    _style_panel(panel, boost=1)
+    _style_panel(panel, boost=2)
 
-    root = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, panel_w, panel_h))
+    root = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
     root.setWantsLayer_(True)
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
 
-    # Outer neon wash
+    # Neon wash under pill
     halo = NSView.alloc().initWithFrame_(
-        NSMakeRect(pad - 6, pad - 6, w + 12, h + 12)
+        NSMakeRect(pad - 5, pad - 5, w + 10, h + 10)
     )
     halo.setWantsLayer_(True)
     if halo.layer() is not None:
-        halo.layer().setCornerRadius_((h + 12) / 2.0)
+        halo.layer().setCornerRadius_((h + 10) / 2.0)
         halo.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.20, 0.50, 1.0, 0.16)
+            CGColorCreateGenericRGB(0.18, 0.48, 1.0, 0.18)
         )
         try:
             halo.layer().setShadowOpacity_(1.0)
-            halo.layer().setShadowRadius_(20.0)
+            halo.layer().setShadowRadius_(18.0)
             halo.layer().setShadowOffset_((0, 0))
             halo.layer().setShadowColor_(
                 CGColorCreateGenericRGB(0.30, 0.60, 1.0, 1.0)
@@ -328,29 +302,31 @@ def _make_banner():
             pass
     root.addSubview_(halo)
 
-    # Main pill
     pill = NSView.alloc().initWithFrame_(NSMakeRect(pad, pad, w, h))
     pill.setWantsLayer_(True)
-    layer = pill.layer()
-    if layer is not None:
-        layer.setCornerRadius_(h / 2.0)
-        layer.setBackgroundColor_(CGColorCreateGenericRGB(0.05, 0.06, 0.09, 0.90))
-        layer.setBorderWidth_(1.5)
-        layer.setBorderColor_(CGColorCreateGenericRGB(0.40, 0.75, 1.0, 0.95))
+    if pill.layer() is not None:
+        pill.layer().setCornerRadius_(h / 2.0)
+        pill.layer().setBackgroundColor_(
+            CGColorCreateGenericRGB(0.05, 0.06, 0.09, 0.92)
+        )
+        pill.layer().setBorderWidth_(1.6)
+        pill.layer().setBorderColor_(
+            CGColorCreateGenericRGB(0.40, 0.75, 1.0, 0.98)
+        )
         try:
-            layer.setShadowOpacity_(1.0)
-            layer.setShadowRadius_(12.0)
-            layer.setShadowOffset_((0, 0))
-            layer.setShadowColor_(
+            pill.layer().setShadowOpacity_(1.0)
+            pill.layer().setShadowRadius_(14.0)
+            pill.layer().setShadowOffset_((0, 0))
+            pill.layer().setShadowColor_(
                 CGColorCreateGenericRGB(0.35, 0.70, 1.0, 1.0)
             )
         except Exception:
             pass
 
-    pip = NSView.alloc().initWithFrame_(NSMakeRect(16, (h - 6) / 2.0, 6, 6))
+    pip = NSView.alloc().initWithFrame_(NSMakeRect(16, (h - 7) / 2.0, 7, 7))
     pip.setWantsLayer_(True)
     if pip.layer() is not None:
-        pip.layer().setCornerRadius_(3.0)
+        pip.layer().setCornerRadius_(3.5)
         pip.layer().setBackgroundColor_(
             CGColorCreateGenericRGB(0.50, 0.80, 1.0, 1.0)
         )
@@ -359,7 +335,7 @@ def _make_banner():
             pip.layer().setShadowRadius_(6.0)
             pip.layer().setShadowOffset_((0, 0))
             pip.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.45, 0.75, 1.0, 1.0)
+                CGColorCreateGenericRGB(0.4, 0.75, 1.0, 1.0)
             )
         except Exception:
             pass
@@ -385,13 +361,41 @@ def _make_banner():
     root.addSubview_(pill)
 
     panel.setContentView_(root)
-    panel.setFrameOrigin_((panel_x, panel_y))
+    panel.setFrameOrigin_((px, py) if False else (0, 0))
+    # set full frame
+    from AppKit import NSMakeRect
+    px, py, pw, ph, *_ = (*_banner_layout()[:4],)
+    # unpack properly
+    layout = _banner_layout()
+    panel.setFrame_display_(
+        NSMakeRect(layout[0], layout[1], layout[2], layout[3]), True
+    )
     _banner = panel
     return panel
 
 
+def _banner_layout():
+    from AppKit import NSScreen
+    screen = NSScreen.mainScreen()
+    pad = 20.0
+    w, h = 252.0, 38.0
+    if screen is None:
+        return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
+    vf = screen.visibleFrame()
+    margin = pad + 64.0  # fully clear of Dock
+    pill_x = vf.origin.x + (vf.size.width - w) / 2.0
+    pill_y = vf.origin.y + margin
+    return (
+        pill_x - pad,
+        pill_y - pad,
+        w + 2 * pad,
+        h + 2 * pad,
+        w, h, pad,
+    )
+
+
 def show(x: float | None = None, y: float | None = None) -> bool:
-    global _active
+    global _active, _mode
     if not enabled():
         return False
     try:
@@ -406,87 +410,92 @@ def show(x: float | None = None, y: float | None = None) -> bool:
             Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(x, y))
             Quartz.CGAssociateMouseAndMouseCursorPosition(True)
 
-        if _ring is None:
-            _make_pointer_panel()
-        view = _ring.contentView()
-        if view is not None:
-            view.mode = "normal"
-            view.setNeedsDisplay_(True)
+        # ONE cursor: keep system pointer; halo only
+        _mode = "blue"
+        _make_halo(_SIZE)
+        _set_halo_mode("blue")
+        _place_halo(x, y, _SIZE)
 
-        _hide_system_cursor()
-        _place_at_cg(x, y)
-
-        # Always rebuild banner layout (screen / dock can change)
+        global _banner
         if _banner is not None:
             try:
                 _banner.orderOut_(None)
             except Exception:
                 pass
-            globals()["_banner"] = None
+            _banner = None
         ban = _make_banner()
         ban.orderFrontRegardless()
 
         _active = True
-        _pump(n=12, seconds=0.04)
+        _pump(n=10, seconds=0.03)
         return True
     except Exception as e:
         try:
             print(f"[presence] show failed: {type(e).__name__}: {e}")
         except Exception:
             pass
-        _show_system_cursor()
         return False
 
 
+def _set_halo_mode(mode: str):
+    global _mode
+    _mode = mode
+    if _halo is None:
+        return
+    view = _halo.contentView()
+    if view is not None and hasattr(view, "mode"):
+        view.mode = "red" if mode == "red" else "blue"
+        view.setNeedsDisplay_(True)
+
+
 def move(x: float, y: float) -> None:
+    """Warp already done by input.py; place halo on the SAME cg coords — no lag chase."""
     if not enabled():
         return
     if not _active:
         show(x, y)
         return
     try:
-        if _ring is None:
-            _make_pointer_panel()
-        _hide_system_cursor()
-        _place_at_cg(float(x), float(y))
+        if _halo is None:
+            _make_halo(_SIZE)
+        if _mode != "blue":
+            _set_halo_mode("blue")
+        # Same coordinates as CGWarp in the same call stack → synced
+        _place_halo(float(x), float(y), _SIZE)
     except Exception:
         pass
 
 
 def click_flash(x: float, y: float) -> None:
+    """Subtle red flash on click, then back to blue — same center, no second cursor."""
     if not enabled():
         return
     try:
         if not _active:
             show(x, y)
-        view = _ring.contentView() if _ring else None
-        if view is not None:
-            view.mode = "click"
-            view.setNeedsDisplay_(True)
-        _place_at_cg(float(x), float(y))
+        _set_halo_mode("red")
+        _place_halo(float(x), float(y), _FLASH)
         _pump(n=4, seconds=0.015)
-        time.sleep(0.06)
-        if view is not None:
-            view.mode = "normal"
-            view.setNeedsDisplay_(True)
-        _place_at_cg(float(x), float(y))
+        time.sleep(0.07)
+        _set_halo_mode("blue")
+        _place_halo(float(x), float(y), _SIZE)
     except Exception:
         pass
 
 
 def hide() -> None:
-    global _ring, _banner, _active
+    global _halo, _banner, _active, _last_cg
     try:
-        if _ring is not None:
-            _ring.orderOut_(None)
-            _ring = None
+        if _halo is not None:
+            _halo.orderOut_(None)
+            _halo = None
         if _banner is not None:
             _banner.orderOut_(None)
             _banner = None
     except Exception:
         pass
     _active = False
-    _show_system_cursor()
+    _last_cg = None
     _pump(n=3, seconds=0.01)
 
 
@@ -505,40 +514,6 @@ def pulse():
     click_flash(float(p.x), float(p.y))
 
 
-def _make_pointer_panel():
-    global _ring
-    from AppKit import NSMakeRect, NSPanel, NSWindowStyleMaskBorderless
-    _ensure_app()
-    panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, _CANVAS, _CANVAS),
-        NSWindowStyleMaskBorderless,
-        2,
-        False,
-    )
-    _style_panel(panel)
-    View = _PointerView.view_class()
-    view = View.alloc().initWithFrame_(NSMakeRect(0, 0, _CANVAS, _CANVAS))
-    view.mode = "normal"
-    panel.setContentView_(view)
-    _ring = panel
-    return panel
-
-
-def _place_at_cg(cg_x: float, cg_y: float):
-    if _ring is None:
-        return
-    ox, oy = _cg_to_panel_origin(cg_x, cg_y)
-    _ring.setFrameOrigin_((ox, oy))
-    _ring.orderFrontRegardless()
-
-
-def _banner_geometry():
-    from AppKit import NSScreen
-    screen = NSScreen.mainScreen()
-    if screen is None:
-        return 500.0, 40.0, 220.0, 36.0
-    vf = screen.visibleFrame()
-    w, h = 220.0, 36.0
-    x = vf.origin.x + (vf.size.width - w) / 2.0
-    y = vf.origin.y + 28.0
-    return x, y, w, h
+# --- wire input.py overlay API ---
+def set_overlay(_):
+    pass

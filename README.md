@@ -157,9 +157,9 @@ Env knobs:
 | `DH_SAFE=1` (default) | Agent policy defaults |
 | `DH_ALLOW_SENSITIVE=1` | Allow sensitive app names / overrides |
 
-**Presence (default on):** soft blue-glow pointer while moving, brief red pulse on click, bottom neon **Agent controlling** bar so you don’t fight the automation. Click-through. Off: `DH_PRESENCE=0`.
+**Presence (default on):** **one** system cursor + soft blue halo while moving; brief **red** halo on click; bottom neon **Agent controlling** bar. No second fake arrow (that caused lag). Off: `DH_PRESENCE=0`.
 
-**Observe loop (optional):** for agents *building* visual things — demo → screenshot → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md`.
+**Observe loop (optional):** for agents *building* visual things — demo → **many** screenshots → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md` / `scripts/observe-demo.sh`.
 
 ---
 

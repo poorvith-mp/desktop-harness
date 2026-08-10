@@ -34,28 +34,19 @@ Vision on a screenshot is how the agent “sits next to you” without guessing.
 
 ## Presence UI specifically
 
+**Dense capture (required for motion bugs):** one screenshot is not enough.
+Take many frames while moving so lag/desync shows up:
+
 ```bash
-# Terminal A / background: timed captures
-mkdir -p /tmp/dh-observe && rm -f /tmp/dh-observe/*.png
-( sleep 1.2; screencapture -x /tmp/dh-observe/hold.png
-  sleep 2.0; screencapture -x /tmp/dh-observe/move.png
-  sleep 1.5; screencapture -x /tmp/dh-observe/click.png ) &
-
-# Terminal B: demo
-DH_NO_DAEMON=1 DH_PRESENCE=1 desktop-harness <<'PY'
-enable_agent_cursor(True)
-# … moves …
-hide_agent_presence()
-PY
+./scripts/observe-demo.sh /tmp/dh-observe
+# then read several frames: hold, mid-move, click
 ```
-
-Then open each PNG and critique.
 
 ## Checklist for presence
 
-- [ ] Banner clear of notch / menu / tab strip  
-- [ ] Banner readable but not loud  
-- [ ] Pointer is cursor-like with soft glow (not a bold disc)  
-- [ ] No obvious double-cursor lag  
-- [ ] Click feedback subtle  
+- [ ] **One** cursor only — soft halo around system pointer, never a second arrow  
+- [ ] Halo locked to warp target (no “dragging a second cursor”)  
+- [ ] Move = soft blue; click = brief red then blue  
+- [ ] Banner fully on-screen (not half in Dock), neon edge readable  
 - [ ] Hands-off meaning is obvious  
+- [ ] Multiple frames reviewed, not one still
