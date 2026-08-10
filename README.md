@@ -142,7 +142,9 @@ Env knobs:
 | `DH_SAFE=1` (default) | Agent policy defaults |
 | `DH_ALLOW_SENSITIVE=1` | Allow sensitive app names / overrides |
 
-**Presence:** while the agent moves/clicks, a minimal blue ring follows the pointer and a small top pill says **Agent active — hands off** so you don’t fight the automation. Click-through (won’t block the UI). Turn off with `DH_PRESENCE=0`.
+**Presence (default on):** soft blue-glow pointer while moving, brief red pulse on click, bottom neon **Agent controlling** bar so you don’t fight the automation. Click-through. Off: `DH_PRESENCE=0`.
+
+**Observe loop (optional):** for agents *building* visual things — demo → screenshot → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md`.
 
 ---
 

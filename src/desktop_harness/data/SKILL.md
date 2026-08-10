@@ -95,6 +95,18 @@ Harness also blocks password-manager-like app names unless `DH_ALLOW_SENSITIVE=1
 - Electron apps may need screenshot fallback  
 - Cap tree size — don’t dump full AX  
 
+## Observe loop (optional — visual QA only)
+
+When **building or polishing something on-screen** (presence, a UI demo, layout):
+
+```
+run demo → screencapture → read the PNG → fix → demo again
+```
+
+See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
+
+Presence UI: blue while moving; brief **red** pulse on click; bottom neon “Agent controlling” bar.
+
 ## Docs in repo
 
-`README.md` · `HOW_IT_WORKS.md` · `DESIGN.md`
+`README.md` · `HOW_IT_WORKS.md` · `DESIGN.md` · `docs/OBSERVE-LOOP.md`
