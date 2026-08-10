@@ -137,8 +137,12 @@ Env knobs:
 |----------|--------|
 | `DH_NO_DAEMON=1` | Always in-process |
 | `DH_MOUSE_INSTANT=1` | Warp mouse with no animation |
+| `DH_PRESENCE=1` (default) | Soft ring + “Agent active — hands off” pill while controlling |
+| `DH_PRESENCE=0` | Disable presence UI |
 | `DH_SAFE=1` (default) | Agent policy defaults |
 | `DH_ALLOW_SENSITIVE=1` | Allow sensitive app names / overrides |
+
+**Presence:** while the agent moves/clicks, a minimal blue ring follows the pointer and a small top pill says **Agent active — hands off** so you don’t fight the automation. Click-through (won’t block the UI). Turn off with `DH_PRESENCE=0`.
 
 ---
 

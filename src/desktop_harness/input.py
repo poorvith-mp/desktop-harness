@@ -24,14 +24,44 @@ _KEYCODES = {
     "cmd": 55, "alt": 58, "ctrl": 59, "enter": 36, "esc": 53, "backspace": 51,
 }
 
-# Optional agent-cursor overlay (set by helpers when available)
+# Optional agent presence overlay (ring + banner)
 _overlay = None
+_auto_presence = True  # wire presence module on first motion if enabled
 
 
 def set_overlay(overlay) -> None:
-    """Attach an optional visual agent cursor (cursor_overlay module)."""
+    """Attach visual presence (presence / cursor_overlay module)."""
     global _overlay
     _overlay = overlay
+
+
+def _presence_move(x: float, y: float):
+    global _overlay
+    if _overlay is not None:
+        try:
+            _overlay.move(x, y)
+            return
+        except Exception:
+            pass
+    if not _auto_presence:
+        return
+    try:
+        from . import presence
+        if presence.enabled():
+            presence.ensure()
+            presence.move(x, y)
+            _overlay = presence
+    except Exception:
+        pass
+
+
+def _presence_click(x: float, y: float):
+    try:
+        from . import presence
+        if presence.enabled():
+            presence.click_flash(x, y)
+    except Exception:
+        pass
 
 
 def mouse_pos() -> dict[str, float]:
@@ -52,11 +82,7 @@ def _warp(x: float, y: float):
     Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(float(x), float(y)))
     # Associate next mouse event with warp so apps don't jump-correct
     Quartz.CGAssociateMouseAndMouseCursorPosition(True)
-    if _overlay is not None:
-        try:
-            _overlay.move(x, y)
-        except Exception:
-            pass
+    _presence_move(x, y)
 
 
 def move_to(
@@ -136,6 +162,7 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
         _warp(x, y)
         _post_mouse(Quartz.kCGEventMouseMoved, x, y)
     time.sleep(0.02)
+    _presence_click(x, y)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
     _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
     if double:

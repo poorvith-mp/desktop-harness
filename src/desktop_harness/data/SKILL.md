@@ -67,7 +67,9 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
 - Media: `ensure_media_playing(app?)` — **look once, act once** (see below)
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`
-- Meta: `wait`, `wait_stable`, `enable_agent_cursor`
+- Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
+  `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
+- Meta: `wait`, `wait_stable`
 
 ## Media / players (learn from mistakes)
 

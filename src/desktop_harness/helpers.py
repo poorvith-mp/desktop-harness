@@ -97,25 +97,35 @@ def type_text(*args, **kwargs):
 
 
 def enable_agent_cursor(enabled: bool = True):
-    """Show a floating colored circle that follows agent mouse moves."""
-    if not enabled:
-        try:
-            from . import cursor_overlay as co
-            co.hide()
-        except Exception:
-            pass
-        _input.set_overlay(None)
-        return False
+    """Show / hide agent presence (ring + hands-off pill).
+
+    Default: presence auto-enables on mouse moves when DH_PRESENCE=1 (default).
+    Call enable_agent_cursor(False) or set DH_PRESENCE=0 to disable.
+    """
     try:
-        from . import cursor_overlay as co
+        from . import presence
+        if not enabled:
+            presence.hide()
+            _input.set_overlay(None)
+            return False
         p = mouse_pos()
-        co.show(p["x"], p["y"])
-        _input.set_overlay(co)
-        return True
+        ok = presence.show(p["x"], p["y"])
+        if ok:
+            _input.set_overlay(presence)
+        return ok
     except Exception as e:
-        # overlay optional — mouse still works
-        print(f"agent_cursor unavailable: {e}")
+        print(f"agent presence unavailable: {e}")
         return False
+
+
+def hide_agent_presence():
+    """Hide ring + banner when a control sequence is finished."""
+    try:
+        from . import presence
+        presence.hide()
+    except Exception:
+        pass
+    _input.set_overlay(None)
 
 
 def wait(seconds: float = 0.4):
