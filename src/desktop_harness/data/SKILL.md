@@ -64,12 +64,14 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 
 ## Helpers
 
-- Discovery: `list_apps`, `list_windows`, `frontmost_app`, `open_app`
+- Discovery: `list_apps`, `list_windows`, `frontmost_app`, `open_app`, **`window_frame(app?)`**
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
-  (`ax_snapshot` = debug dump; prefer `labels`/`find`)
+  (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
 - Media: `ensure_media_playing(app?)` — **look once, act once** (see below)
-- Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`
+- Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
+  Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
+- **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
 - Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
@@ -145,13 +147,24 @@ AX labels often cover **chrome only** (tabs, menus), not objects on the
 canvas. That is not a harness failure — the OS tree has nothing useful to
 click. Path without losing capability:
 
-1. `screenshot(app=…)` once → read the image (vision)  
-2. Coordinate `click` / `drag` in **global** coords (`window.x/y` + image px)  
-3. Prefer **one multi-step daemon script** over many one-liners  
+```python
+fr = window_frame("Canva")
+path = screenshot(app="Canva")
+# …vision/plan on the image (window-local px)…
+run_plan([
+    {"op": "drag", "wx1": 100, "wy1": 200, "wx2": 400, "wy2": 300},
+    {"op": "drag", "wx1": 500, "wy1": 200, "wx2": 700, "wy2": 300},
+    {"op": "hide_presence"},
+], app="Canva")
+```
+
+1. `window_frame` + `screenshot` once → read image (vision / parallel perception)  
+2. Coordinate actions in **window-local** px via `click_in_window` / `drag_in_window` / `run_plan`  
+3. **One** daemon `run_plan` (or one long script) — not N CLI spawns  
 4. Do **not** dual-agent the same pointer — one Mac, one cursor  
 
-Parallel *perception* (subagent reads a saved PNG while the main agent
-plans the next drag list) is fine. Parallel *control* of one app is not.
+Parallel *perception* (subagent labels clusters on a saved PNG) is fine.  
+Parallel *control* of one app is not.
 
 ## Gotchas
 

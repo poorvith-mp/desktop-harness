@@ -210,16 +210,27 @@ def walk(
     max_depth: int = 12,
     max_nodes: int = 400,
     interactive_only: bool = False,
+    include_menubar: bool = False,
     path: str = "0",
     depth: int = 0,
     out: list | None = None,
 ) -> list[dict[str, Any]]:
-    """Depth-first collect of nodes."""
+    """Depth-first collect of nodes.
+
+    ``include_menubar=False`` (default) skips descending into AXMenuBar.
+    Menu bars often hold hundreds of system items (Writing Tools, Recent
+    Items, …) that burn the whole ``max_nodes`` budget before any window
+    content is seen — especially Canva/Electron. Pass ``include_menubar=True``
+    when you actually need menu items (File → Save, app menus).
+    """
     if out is None:
         out = []
     if depth > max_depth or len(out) >= max_nodes:
         return out
     role = _str_attr(el, kAXRoleAttribute)
+    # Skip menubar subtrees entirely unless explicitly requested
+    if role == "AXMenuBar" and not include_menubar:
+        return out
     node = _node_dict(el, path, depth)
     keep = True
     if interactive_only and role and role not in _INTERACTIVE:
@@ -249,6 +260,7 @@ def walk(
             max_depth=max_depth,
             max_nodes=max_nodes,
             interactive_only=interactive_only,
+            include_menubar=include_menubar,
             path=f"{path}.{i}",
             depth=depth + 1,
             out=out,
@@ -270,9 +282,15 @@ _walk_cache: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _cached_walk(
-    root, pid, *, max_depth: int, max_nodes: int, interactive_only: bool
+    root,
+    pid,
+    *,
+    max_depth: int,
+    max_nodes: int,
+    interactive_only: bool,
+    include_menubar: bool = False,
 ) -> list[dict[str, Any]]:
-    key = (pid, max_depth, max_nodes, interactive_only)
+    key = (pid, max_depth, max_nodes, interactive_only, include_menubar)
     now = time.monotonic()
     hit = _walk_cache.get(key)
     if hit is not None and (now - hit[0]) < _WALK_CACHE_TTL:
@@ -282,6 +300,7 @@ def _cached_walk(
         max_depth=max_depth,
         max_nodes=max_nodes,
         interactive_only=interactive_only,
+        include_menubar=include_menubar,
     )
     # Stamp with the time the walk *finished*, not started — the walk
     # itself can take 100-300ms on a busy app, and a start-time stamp
@@ -297,12 +316,18 @@ def ax_snapshot(
     max_nodes: int = 300,
     interactive_only: bool = True,
     include_el: bool = False,
+    include_menubar: bool = False,
 ) -> list[dict[str, Any]]:
-    """Compact AX node list for the app (default: frontmost)."""
+    """Compact AX node list for the app (default: frontmost).
+
+    Menubar is skipped by default so the node budget goes to real window
+    content. Pass ``include_menubar=True`` when targeting menu items.
+    """
     root, pid = app_element(app)
     cached = _cached_walk(
         root, pid,
         max_depth=max_depth, max_nodes=max_nodes, interactive_only=interactive_only,
+        include_menubar=include_menubar,
     )
     # Copy each node dict — callers below (and ax_snapshot's own callers)
     # mutate/strip keys (e.g. popping "_el"); the cache must stay pristine
@@ -401,8 +426,11 @@ def find(
             score += 5
         return score
 
-    # Fast path: interactive-only compact tree
-    nodes = ax_snapshot(app, max_nodes=220, max_depth=9, interactive_only=True, include_el=True)
+    # Fast path: interactive-only compact tree (windows only — skip menubar noise)
+    nodes = ax_snapshot(
+        app, max_nodes=220, max_depth=9, interactive_only=True,
+        include_el=True, include_menubar=False,
+    )
     hits: list[tuple[int, dict]] = []
     for n in nodes:
         s = score_node(n)
@@ -411,9 +439,12 @@ def find(
             if s >= 100 and len(hits) >= 1:
                 # exact title/label — good enough, skip deep rescan
                 break
-    # Slow path only if nothing useful
+    # Slow path only if nothing useful — include menubar so File/Edit items still work
     if not hits or hits[0][0] < 60:
-        nodes = ax_snapshot(app, max_nodes=450, max_depth=12, interactive_only=False, include_el=True)
+        nodes = ax_snapshot(
+            app, max_nodes=450, max_depth=12, interactive_only=False,
+            include_el=True, include_menubar=True,
+        )
         hits = []
         for n in nodes:
             s = score_node(n)

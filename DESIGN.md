@@ -64,9 +64,10 @@ Optional warm **daemon** for multi-step speed (token-authenticated local socket)
 ### Perception contract
 
 1. **`labels` / `find` / `click_text`** — default eyes; targeted, cheap, JSON-safe  
-2. **`ax_snapshot`** — full interactive dump for **debug only** (often far more tokens than a screenshot; cap `max_nodes`)  
-3. **`screenshot`** — window-scoped when AX is empty or custom-drawn  
-4. Coordinates only when no AX action exists  
+2. **`ax_snapshot`** — full interactive dump for **debug only** (often far more tokens than a screenshot; cap `max_nodes`). **Menubar skipped by default** so node budget goes to windows; `include_menubar=True` when you need menus.  
+3. **`screenshot` + `window_frame`** — window-scoped when AX is empty or custom-drawn; map px → global via `win_to_global` / `click_in_window`  
+4. **`run_plan`** — multi-step actions in one process (efficiency without cutting ops)  
+5. Coordinates only when no AX action exists  
 
 Note: `AXPress` works on a **background** app without focus steal — the AX path already delivers the “background control” roadmap item for pressable controls.
 

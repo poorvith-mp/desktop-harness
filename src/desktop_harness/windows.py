@@ -68,6 +68,72 @@ def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
     return out
 
 
+def window_frame(app: str | int | None = None) -> dict[str, Any]:
+    """Largest on-screen window for an app, in **global** screen points.
+
+    Prefer this when mapping screenshot pixels → clicks: window-local
+    ``(px, py)`` becomes global ``(frame["x"] + px, frame["y"] + py)``.
+    ``app=None`` → frontmost app. Raises if no matching window.
+    """
+    if app is None:
+        front = frontmost_app()
+        if not front:
+            raise RuntimeError("no frontmost app for window_frame")
+        name = front.get("name") or ""
+        pid = front.get("pid")
+    elif isinstance(app, int):
+        info = find_app(app)
+        name = (info or {}).get("name") or ""
+        pid = app
+    else:
+        name = str(app)
+        info = find_app(app)
+        pid = (info or {}).get("pid")
+
+    wins = list_windows(on_screen_only=True)
+    matched: list[dict[str, Any]] = []
+    q = (name or "").lower()
+    for w in wins:
+        if pid is not None and int(w.get("pid") or 0) == int(pid):
+            matched.append(w)
+            continue
+        if q and q in (w.get("app") or "").lower():
+            matched.append(w)
+    # Fallback: any on-screen window if caller asked for frontmost and
+    # ownership metadata was briefly stale (CGWindowList vs NSWorkspace).
+    if not matched and app is None and wins:
+        matched = list(wins)
+    if not matched:
+        raise RuntimeError(
+            f"no on-screen window for app {app!r} "
+            f"(name={name!r} pid={pid!r}; {len(wins)} windows visible)"
+        )
+    # Largest by area — main content, not a tiny utility panel
+    best = max(matched, key=lambda w: float(w.get("w", 0)) * float(w.get("h", 0)))
+    return {
+        "id": best.get("id"),
+        "app": best.get("app"),
+        "pid": best.get("pid"),
+        "title": best.get("title"),
+        "x": float(best["x"]),
+        "y": float(best["y"]),
+        "w": float(best["w"]),
+        "h": float(best["h"]),
+    }
+
+
+def win_to_global(
+    x: float,
+    y: float,
+    app: str | int | None = None,
+    *,
+    frame: dict[str, Any] | None = None,
+) -> tuple[float, float]:
+    """Map window-local (screenshot) coords → global screen points."""
+    fr = frame if frame is not None else window_frame(app)
+    return float(fr["x"]) + float(x), float(fr["y"]) + float(y)
+
+
 def frontmost_app() -> dict[str, Any] | None:
     _refresh_workspace()
     app = NSWorkspace.sharedWorkspace().frontmostApplication()

@@ -85,6 +85,28 @@ def run_selftest() -> int:
         assert not frame_on_screen({"x": 50, "y": 50, "w": 0, "h": 10})
         assert not frame_on_screen({"x": 100, "y": 9000, "w": 40, "h": 40})
 
+    def _window_frame_map():
+        fr = H.window_frame()
+        assert fr["w"] >= 50 and fr["h"] >= 50
+        gx, gy = H.win_to_global(10, 20, frame=fr)
+        assert abs(gx - (fr["x"] + 10)) < 0.01
+        assert abs(gy - (fr["y"] + 20)) < 0.01
+
+    def _run_plan_wait():
+        # no GUI mutation — just prove plan runner wires ops
+        out = H.run_plan([
+            {"op": "wait", "seconds": 0.05},
+            {"op": "window_frame"},
+        ], stop_on_error=True)
+        assert len(out) == 2 and all(r.get("ok") for r in out)
+
+    def _menubar_skipped_by_default():
+        # frontmost labels should not be flooded with Apple menu items
+        labs = H.labels(limit=40)
+        appleish = [L for L in labs if "About This Mac" in L or "System Settings" in L]
+        # zero preferred; allow a couple if menubar leaked somehow
+        assert len(appleish) <= 2, appleish
+
     for name, fn in [
         ("list_apps", _apps),
         ("list_windows", _wins),
@@ -96,6 +118,9 @@ def run_selftest() -> int:
         ("media_transport api", _media_api),
         ("find_app ranking + pid", _find_app_ranking),
         ("frame_on_screen filter", _frame_filter),
+        ("window_frame + win_to_global", _window_frame_map),
+        ("run_plan wait", _run_plan_wait),
+        ("menubar skipped by default", _menubar_skipped_by_default),
     ]:
         check(name, fn)
 

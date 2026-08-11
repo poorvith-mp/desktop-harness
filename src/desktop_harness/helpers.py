@@ -32,6 +32,8 @@ frontmost_app = _windows.frontmost_app
 find_app = _windows.find_app
 activate = _windows.activate
 open_app = _windows.open_app
+window_frame = _windows.window_frame
+win_to_global = _windows.win_to_global
 
 ax_snapshot = _ax.ax_snapshot
 find = _ax.find
@@ -70,6 +72,35 @@ def drag(*args, **kwargs):
     _safety.check_frontmost_allowed()
     _safety.audit("drag", {"args": args[:4]})
     return _input.drag(*args, **kwargs)
+
+
+def click_in_window(
+    x: float,
+    y: float,
+    app: str | int | None = None,
+    *,
+    frame: dict[str, Any] | None = None,
+    **kwargs,
+):
+    """Click at window-local (screenshot) coordinates — maps via window_frame."""
+    gx, gy = win_to_global(x, y, app, frame=frame)
+    return click(gx, gy, **kwargs)
+
+
+def drag_in_window(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    app: str | int | None = None,
+    *,
+    frame: dict[str, Any] | None = None,
+    **kwargs,
+):
+    """Drag in window-local coords (screenshot space → global)."""
+    g1 = win_to_global(x1, y1, app, frame=frame)
+    g2 = win_to_global(x2, y2, app, frame=frame)
+    return drag(g1[0], g1[1], g2[0], g2[1], **kwargs)
 
 
 def scroll(*args, **kwargs):
@@ -161,6 +192,132 @@ def ensure_daemon() -> bool:
     """Return True if warm daemon is available (start is a separate CLI step)."""
     from . import daemon as d
     return d.is_running()
+
+
+def run_plan(
+    steps: list[dict[str, Any]],
+    *,
+    stop_on_error: bool = True,
+    app: str | int | None = None,
+) -> list[dict[str, Any]]:
+    """Run many UI steps in **one process** (daemon-friendly, low round-trips).
+
+    Prefer this over N separate ``desktop-harness`` CLI calls for a multi-step
+    task — same capability, far less spawn/IPC cost.
+
+    Each step is a dict with ``"op"`` plus op-specific fields:
+
+    | op | fields |
+    |----|--------|
+    | ``open_app`` | ``name`` |
+    | ``click`` | ``x``, ``y`` (global) or ``wx``, ``wy`` (window-local) |
+    | ``drag`` | ``x1,y1,x2,y2`` or ``wx1,wy1,wx2,wy2`` |
+    | ``click_text`` | ``text``, optional ``app``, ``exact`` |
+    | ``type_text`` | ``text`` |
+    | ``hotkey`` | ``keys`` (list) |
+    | ``key`` | ``name`` |
+    | ``wait`` | ``seconds`` |
+    | ``screenshot`` | optional ``app`` |
+    | ``labels`` | optional ``app``, ``limit`` |
+    | ``hide_presence`` | — |
+
+    When ``app`` is set on the plan, window-local coords use that frame once
+    (cached for the whole plan). Returns a list of ``{op, ok, result|error}``.
+    """
+    results: list[dict[str, Any]] = []
+    frame: dict[str, Any] | None = None
+    plan_app = app
+
+    def _frame_for(step_app=None):
+        nonlocal frame, plan_app
+        a = step_app if step_app is not None else plan_app
+        if a is None and frame is None:
+            try:
+                frame = window_frame(None)
+            except Exception:
+                frame = None
+            return frame
+        if a is not None:
+            return window_frame(a)
+        return frame
+
+    for i, raw in enumerate(steps):
+        step = dict(raw or {})
+        op = (step.get("op") or step.get("action") or "").strip().lower()
+        entry: dict[str, Any] = {"i": i, "op": op, "ok": False}
+        try:
+            if op in ("open_app", "open"):
+                entry["result"] = open_app(step["name"])
+            elif op == "click":
+                if "wx" in step or "wy" in step:
+                    fr = _frame_for(step.get("app"))
+                    entry["result"] = click_in_window(
+                        float(step.get("wx", 0)),
+                        float(step.get("wy", 0)),
+                        step.get("app", plan_app),
+                        frame=fr,
+                    )
+                else:
+                    entry["result"] = click(float(step["x"]), float(step["y"]))
+            elif op == "drag":
+                if "wx1" in step or "wy1" in step:
+                    fr = _frame_for(step.get("app"))
+                    entry["result"] = drag_in_window(
+                        float(step.get("wx1", 0)),
+                        float(step.get("wy1", 0)),
+                        float(step.get("wx2", 0)),
+                        float(step.get("wy2", 0)),
+                        step.get("app", plan_app),
+                        frame=fr,
+                    )
+                else:
+                    entry["result"] = drag(
+                        float(step["x1"]), float(step["y1"]),
+                        float(step["x2"]), float(step["y2"]),
+                    )
+            elif op == "click_text":
+                entry["result"] = click_text(
+                    step["text"],
+                    app=step.get("app", plan_app),
+                    exact=bool(step.get("exact", False)),
+                )
+            elif op == "type_text":
+                entry["result"] = type_text(step["text"])
+            elif op == "hotkey":
+                keys = step.get("keys") or step.get("key") or []
+                if isinstance(keys, str):
+                    keys = keys.split("+")
+                entry["result"] = hotkey(*keys)
+            elif op == "key":
+                entry["result"] = key(step.get("name") or step.get("key"))
+            elif op == "wait":
+                wait(float(step.get("seconds", step.get("s", 0.3))))
+                entry["result"] = {"waited": step.get("seconds", 0.3)}
+            elif op == "screenshot":
+                entry["result"] = str(
+                    screenshot(app=step.get("app", plan_app))
+                )
+            elif op == "labels":
+                entry["result"] = labels(
+                    step.get("app", plan_app),
+                    limit=int(step.get("limit", 30)),
+                )
+            elif op in ("hide_presence", "hide_agent_presence"):
+                hide_agent_presence()
+                entry["result"] = True
+            elif op == "window_frame":
+                entry["result"] = window_frame(step.get("app", plan_app))
+            else:
+                raise ValueError(f"unknown plan op: {op!r}")
+            entry["ok"] = True
+        except Exception as e:
+            entry["error"] = f"{type(e).__name__}: {e}"
+            results.append(entry)
+            if stop_on_error:
+                break
+            continue
+        results.append(entry)
+    return results
 
 
 def button_labels(app: str | int | None = None, limit: int = 40) -> list[str]:
