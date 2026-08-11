@@ -6,10 +6,25 @@ from typing import Any
 
 import Quartz
 from AppKit import NSRunningApplication, NSWorkspace
+from CoreFoundation import CFRunLoopRunInMode, kCFRunLoopDefaultMode
+
+
+def _refresh_workspace() -> None:
+    """Deliver pending NSWorkspace notifications before reading its caches.
+
+    `runningApplications()` and `frontmostApplication()` are caches that only
+    update when the host process pumps a run loop. Neither the CLI nor the warm
+    daemon ever does, so both stay frozen at process start: apps launched later
+    are invisible (so `activate()` times out on every cold launch) and apps that
+    have quit linger indefinitely. A zero timeout drains what is already pending
+    without blocking.
+    """
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, True)
 
 
 def list_apps() -> list[dict[str, Any]]:
     """Running apps with a regular activation policy (skip agents/UI helpers)."""
+    _refresh_workspace()
     out = []
     for app in NSWorkspace.sharedWorkspace().runningApplications():
         # 0 = regular, 1 = accessory, 2 = prohibited
@@ -54,6 +69,7 @@ def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
 
 
 def frontmost_app() -> dict[str, Any] | None:
+    _refresh_workspace()
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if not app:
         return None
