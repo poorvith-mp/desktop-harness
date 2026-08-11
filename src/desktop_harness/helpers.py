@@ -120,7 +120,13 @@ def enable_agent_cursor(enabled: bool = True):
 
 
 def hide_agent_presence():
-    """Hide ring + banner when a control sequence is finished."""
+    """Hide ring + banner when a control sequence is finished.
+
+    Call this when you know you're done — it's still the fast, immediate
+    path. If a script forgets (crash, early return, the chat turn just
+    ending), the warm daemon also self-clears presence after a stretch of
+    no harness activity (see daemon.py's idle loop / DH_PRESENCE_IDLE_HIDE)
+    so a missed call doesn't leave the overlay on screen indefinitely."""
     try:
         from . import presence
         presence.hide()
@@ -170,19 +176,15 @@ def button_labels(app: str | int | None = None, limit: int = 40) -> list[str]:
     return out
 
 
-def media_transport(app: str | int | None = None) -> dict[str, Any]:
-    """Inspect Play/Pause transport without clicking.
-
-    Returns {state: 'playing'|'paused'|'unknown', pause: bool, play: bool,
-             transport_play: bool, row_play: bool, labels: [...]}
-
-    Transport Play = exact label "Play" (player bar).
-    Row Play = "Play <track name>" list rows (does NOT mean paused).
-    Prefer this before any media click. Never spam Space — it toggles.
-    """
-    nodes = ax_snapshot(app, max_nodes=400, interactive_only=True)
+def _media_state_from_nodes(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Shared scoring logic for media_transport()/ensure_media_playing() —
+    keeps both reading from one already-fetched node list instead of each
+    re-walking the AX tree. Includes an internal "_play_el" (stripped by
+    media_transport's public return) so ensure_media_playing can press the
+    transport button it just found without a second find()/AXPress walk."""
     labs = []
     has_pause = has_transport_play = has_row_play = False
+    play_el = None
     for n in nodes:
         if n.get("role") != "AXButton":
             continue
@@ -195,6 +197,8 @@ def media_transport(app: str | int | None = None) -> dict[str, Any]:
             has_pause = True
         elif low == "play":
             has_transport_play = True
+            if play_el is None:
+                play_el = n.get("_el")
         elif (low.startswith("play ")
               and "playlist" not in low
               and "play all" not in low
@@ -218,18 +222,57 @@ def media_transport(app: str | int | None = None) -> dict[str, Any]:
         "transport_play": has_transport_play,
         "row_play": has_row_play,
         "labels": labs[:30],
+        "_play_el": play_el,
     }
 
 
+def media_transport(app: str | int | None = None) -> dict[str, Any]:
+    """Inspect Play/Pause transport without clicking.
+
+    Returns {state: 'playing'|'paused'|'unknown', pause: bool, play: bool,
+             transport_play: bool, row_play: bool, labels: [...]}
+
+    Transport Play = exact label "Play" (player bar).
+    Row Play = "Play <track name>" list rows (does NOT mean paused).
+    Prefer this before any media click. Never spam Space — it toggles.
+    """
+    nodes = ax_snapshot(app, max_nodes=400, interactive_only=True)
+    status = _media_state_from_nodes(nodes)
+    status.pop("_play_el", None)
+    return status
+
+
 def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
-    """If transport shows Pause, do nothing. If Play, press it once. Never Space."""
+    """If transport shows Pause, do nothing. If Play, press it once. Never Space.
+
+    One AX walk to read state + locate the Play button, one more (via
+    wait_stable + media_transport) to confirm the press landed — not the
+    3-4 separate full-tree walks a naive read-then-click_text()-then-reread
+    sequence costs, since click_text would otherwise re-walk the tree from
+    scratch to relocate a button this function already just found.
+    """
     from . import safety as _safety
-    status = media_transport(app)
+    nodes = ax_snapshot(app, max_nodes=400, interactive_only=True, include_el=True)
+    status = _media_state_from_nodes(nodes)
+    play_el = status.pop("_play_el", None)
     _safety.audit("ensure_media_playing", status)
     if status["state"] == "playing":
         return {"action": "noop", **status}
     if status["state"] == "paused":
-        hit = click_text("Play", app=app, role="AXButton", exact=True)
+        # Same gate click_text() would apply — direct-press must not
+        # bypass the sensitive-app mutation check.
+        _safety.check_frontmost_allowed()
+        if app:
+            _safety.check_app_allowed(str(app))
+        pressed = False
+        hit: dict[str, Any] = {"label": "Play", "role": "AXButton"}
+        if play_el is not None:
+            _safety.audit("click_text", {"text": "Play", "app": app, "exact": True, "direct": True})
+            pressed = _ax.press_element(play_el)
+        if not pressed:
+            # Element missing/stale/press failed — fall back to the normal
+            # find()+click_text path (it does its own fresh walk).
+            hit = click_text("Play", app=app, role="AXButton", exact=True)
         wait_stable(0.3)
         again = media_transport(app)
         return {"action": "pressed_play", "before": status, "after": again, "hit": hit}
@@ -353,15 +396,18 @@ def screen_info(app: str | None = None) -> dict[str, Any]:
 
 
 def verify(note: str = "", app: str | int | None = None) -> dict[str, Any]:
-    """Close the loop after a UI-changing action.
+    """Screenshot + AX read to close the loop on an action whose failure
+    would otherwise be silent — NOT a routine step after every click.
 
-    The calling agent has vision — the missing piece was never "add a
-    vision model," it was handing that agent the actual pixels + state
-    instead of moving on and assuming the last click worked. Call this
-    after click_text/set_field/anything that's supposed to change the
-    screen, then Read the screenshot path it returns before deciding the
-    step succeeded. Cheap AX state is included too, for checks that don't
-    need a look (e.g. did this label's value change).
+    click_text/set_field already raise if there's no AX match; that's the
+    check for ordinary UI changes. Reach for this specifically for actions
+    that can succeed at the AX layer while doing the wrong thing with no
+    other way to notice — media transport toggles, anything gated under
+    the Consent section, a step you're about to report as finished where
+    being wrong matters. Calling it after everything reintroduces the
+    vision-loop tax the rest of this module exists to avoid. When you do
+    call it, Read the screenshot path it returns before deciding the step
+    succeeded — the point is looking, not just calling the function.
 
     `note` is free text describing what you expected to happen — it goes
     into the audit log next to the actual state, so a later pass (by you

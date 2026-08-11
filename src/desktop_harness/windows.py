@@ -171,12 +171,15 @@ def activate(name_or_bundle: str, wait: float | None = None) -> dict[str, Any]:
             app_info["pid"])
         if app:
             app.activateWithOptions_(1 << 1)
-    if wait is None:
-        wait = 0.35 if cold else 0.12
-    if wait > 0:
-        time.sleep(wait)
-    # Confirm activation (other apps often steal focus from agent hosts)
-    deadline = time.time() + 1.2
+    # Confirm activation by polling the real signal (frontmost app switched)
+    # instead of blind-sleeping the whole budget first. activateWithOptions_
+    # is async and often lands in a few ms; a flat pre-sleep paid the full
+    # 120-350ms on every call regardless. Poll immediately, cap the total
+    # wait at the old budget so behavior on a slow/contested activation
+    # (another app stealing focus) is unchanged.
+    budget = (0.35 if cold else 0.12) if wait is None else wait
+    deadline = time.time() + max(budget, 1.2)
+    poll = 0.02
     while time.time() < deadline:
         cur = find_app(name_or_bundle)
         if cur and cur.get("active"):
@@ -184,7 +187,7 @@ def activate(name_or_bundle: str, wait: float | None = None) -> dict[str, Any]:
             return cur
         if apps:
             apps[0].activateWithOptions_(1 << 1)
-        time.sleep(0.08)
+        time.sleep(poll)
     _safety.audit("activate", {"name": name_or_bundle, "cold": cold, "warn": "focus_uncertain"})
     return find_app(name_or_bundle) or app_info
 

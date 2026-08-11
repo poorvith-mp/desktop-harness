@@ -1,6 +1,7 @@
 """Accessibility-tree perception and element actions — the primary eyes/hands path."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ApplicationServices import (
@@ -133,14 +134,34 @@ def _str_attr(el, attr) -> str:
     return str(v).strip()
 
 
-def _children(el) -> list:
+def _children(el, *, prioritize_windows: bool = False) -> list:
     kids = _copy(el, kAXChildrenAttribute)
     if kids is None:
         return []
     try:
-        return list(kids)
+        kids = list(kids)
     except TypeError:
         return []
+    if prioritize_windows and len(kids) > 1:
+        # Real UI (buttons, transport controls, fields) lives in windows;
+        # AXMenuBar's first item is the shared system Apple menu, and a
+        # busy app's own menus (Recent Items, track/subtitle lists, …)
+        # can be hundreds of nodes. Walked depth-first in raw AXChildren
+        # order (menu bar first, as macOS returns it), that alone can
+        # exhaust max_nodes before a single window is ever visited —
+        # measured on VLC: 400-node budget, 379 AXMenuItems, 0 windows
+        # reached. Windows first means the interactive-only fast pass in
+        # find() actually sees real controls instead of always falling
+        # through to the expensive full-tree rescan.
+        def _rank(c) -> int:
+            role = _str_attr(c, kAXRoleAttribute)
+            if role == "AXWindow":
+                return 0
+            if role == "AXMenuBar":
+                return 2
+            return 1
+        kids = sorted(kids, key=_rank)
+    return kids
 
 
 def app_element(name_or_pid: str | int | None = None):
@@ -219,7 +240,8 @@ def walk(
         # Prefer nodes with a label or interactive role
         if (node["label"] or role in _INTERACTIVE or depth <= 1):
             out.append(node)
-    for i, child in enumerate(_children(el)):
+    kids = _children(el, prioritize_windows=(role == "AXApplication"))
+    for i, child in enumerate(kids):
         if len(out) >= max_nodes:
             break
         walk(
@@ -234,6 +256,40 @@ def walk(
     return out
 
 
+# Short-lived cache of raw walk() output, keyed by what actually changes
+# the result: which app, and how the walk was shaped. A single agent step
+# (e.g. ensure_media_playing, or find() falling through to a rescan) can
+# trigger several full-tree walks within milliseconds of each other against
+# an app whose UI hasn't moved; walking the live AX tree is the genuinely
+# slow part (tens of ms of cross-process calls), not the tiny dict-copy
+# below. 150ms is short enough that it never masks a real UI change (every
+# helper's own settle waits are >= that) but long enough to collapse the
+# back-to-back re-queries that were costing 3-4 walks for one action.
+_WALK_CACHE_TTL = 0.15
+_walk_cache: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _cached_walk(
+    root, pid, *, max_depth: int, max_nodes: int, interactive_only: bool
+) -> list[dict[str, Any]]:
+    key = (pid, max_depth, max_nodes, interactive_only)
+    now = time.monotonic()
+    hit = _walk_cache.get(key)
+    if hit is not None and (now - hit[0]) < _WALK_CACHE_TTL:
+        return hit[1]
+    nodes = walk(
+        root,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
+        interactive_only=interactive_only,
+    )
+    # Stamp with the time the walk *finished*, not started — the walk
+    # itself can take 100-300ms on a busy app, and a start-time stamp
+    # would burn most of the TTL before the entry is even usable.
+    _walk_cache[key] = (time.monotonic(), nodes)
+    return nodes
+
+
 def ax_snapshot(
     app: str | int | None = None,
     *,
@@ -244,12 +300,14 @@ def ax_snapshot(
 ) -> list[dict[str, Any]]:
     """Compact AX node list for the app (default: frontmost)."""
     root, pid = app_element(app)
-    nodes = walk(
-        root,
-        max_depth=max_depth,
-        max_nodes=max_nodes,
-        interactive_only=interactive_only,
+    cached = _cached_walk(
+        root, pid,
+        max_depth=max_depth, max_nodes=max_nodes, interactive_only=interactive_only,
     )
+    # Copy each node dict — callers below (and ax_snapshot's own callers)
+    # mutate/strip keys (e.g. popping "_el"); the cache must stay pristine
+    # or a later include_el=True caller would silently get stripped nodes.
+    nodes = [dict(n) for n in cached]
     # Also pull windows explicitly so titles show up early
     wins = _copy(root, kAXWindowsAttribute) or []
     try:
