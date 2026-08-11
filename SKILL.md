@@ -69,8 +69,11 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`
 - Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
-- Meta: `wait`, `wait_stable`, `verify(note, app?)` — closes the loop after a
-  UI-changing action (see below)
+  (also self-clears after ~20s of no harness activity, so a forgotten call
+  isn't permanent — call it anyway when you know you're done)
+- Meta: `wait`, `wait_stable`, `verify(note, app?)` — screenshot + AX check
+  for the narrow set of actions where failure is silent (see below); not a
+  routine step after every click
 
 ## Prefer what's already open
 
@@ -85,19 +88,36 @@ exact URL. Opening Chrome to a web version of something that was already
 open and visible on screen is the single most confusing thing this harness
 can do — it looks like the agent didn't see what the user saw.
 
-## Verify, don't assume (mandatory after anything that changes the screen)
+## Verify, don't assume — but only where failure is silent
 
-`click_text`, `set_field`, and similar returning without an exception means
-the AX call succeeded — **not** that the screen now shows what you expected.
-After any action meant to change what's on screen, call `verify("what you
-expected to happen")` and **read the screenshot path it returns** before
-telling the user the step worked. You have vision; the harness's job is to
-hand you current pixels + state, not to guess on your behalf. This is cheap
-(one extra call) and it is the difference between "probably clicked
-something" and actually knowing.
+`click_text` / `set_field` already raise if there's no AX match, and
+`ensure_media_playing()` re-reads state after pressing — for a normal
+click, field edit, or app switch, that's the check: no exception plus (when
+it matters) a follow-up `labels()`/`ax_snapshot()` read is enough. Calling
+`verify()` — a screenshot + AX read — after **every** UI-changing action
+brings back exactly the vision-loop tax Efficiency rule 5 says not to pay,
+for no real benefit on the 95% of actions that fail loudly.
 
-Skip this for pure discovery calls (`labels`, `ax_snapshot`) that don't
-change anything.
+Call `verify(note, app?)` — and **read the screenshot path it returns** —
+only when the action could succeed at the AX layer while doing the wrong
+thing, with no other way to notice:
+
+- **Media transport** (play/pause/skip/next): a toggle that "succeeds"
+  whether it played or undid what you just started looks identical without
+  a look. This is what actually broke in `docs/POSTMORTEM-media-play.md` —
+  not a missing screenshot, but pressing a matched-but-wrong control with
+  no re-check. Prefer `ensure_media_playing()` (built-in re-check) over a
+  raw click here; reach for `verify()` if you're doing something media the
+  helper doesn't cover.
+- **Anything already gated under Consent below** (messages, posts,
+  purchases, deletes, security/privacy settings, passwords) — confirm the
+  real outcome before telling the user it's done; getting these wrong is
+  costly, not just annoying.
+- A step you're about to report as finished where being wrong would send
+  you down a materially different fix.
+
+Skip it for routine navigation, discovery calls (`labels`, `ax_snapshot`),
+and clicks whose result you can already see in the return value.
 
 ## Media / players (learn from mistakes)
 

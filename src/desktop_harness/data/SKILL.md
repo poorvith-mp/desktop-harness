@@ -69,7 +69,55 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`
 - Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
-- Meta: `wait`, `wait_stable`
+  (also self-clears after ~20s of no harness activity, so a forgotten call
+  isn't permanent — call it anyway when you know you're done)
+- Meta: `wait`, `wait_stable`, `verify(note, app?)` — screenshot + AX check
+  for the narrow set of actions where failure is silent (see below); not a
+  routine step after every click
+
+## Prefer what's already open
+
+Before opening a browser tab or launching a new instance of anything: run
+`list_apps()` / `frontmost_app()` / `list_windows()` first and check for a
+native app that's already open and matches the task (Spotify, YT Music,
+Mail, Notes, Music, etc). Control that instance directly — it's faster and
+it's what the user is looking at. Only fall back to a browser when no
+matching native app is open, the native app genuinely can't do what's asked
+(e.g. no in-app search for a specific track), or the user's request needs an
+exact URL. Opening Chrome to a web version of something that was already
+open and visible on screen is the single most confusing thing this harness
+can do — it looks like the agent didn't see what the user saw.
+
+## Verify, don't assume — but only where failure is silent
+
+`click_text` / `set_field` already raise if there's no AX match, and
+`ensure_media_playing()` re-reads state after pressing — for a normal
+click, field edit, or app switch, that's the check: no exception plus (when
+it matters) a follow-up `labels()`/`ax_snapshot()` read is enough. Calling
+`verify()` — a screenshot + AX read — after **every** UI-changing action
+brings back exactly the vision-loop tax Efficiency rule 5 says not to pay,
+for no real benefit on the 95% of actions that fail loudly.
+
+Call `verify(note, app?)` — and **read the screenshot path it returns** —
+only when the action could succeed at the AX layer while doing the wrong
+thing, with no other way to notice:
+
+- **Media transport** (play/pause/skip/next): a toggle that "succeeds"
+  whether it played or undid what you just started looks identical without
+  a look. This is what actually broke in `docs/POSTMORTEM-media-play.md` —
+  not a missing screenshot, but pressing a matched-but-wrong control with
+  no re-check. Prefer `ensure_media_playing()` (built-in re-check) over a
+  raw click here; reach for `verify()` if you're doing something media the
+  helper doesn't cover.
+- **Anything already gated under Consent below** (messages, posts,
+  purchases, deletes, security/privacy settings, passwords) — confirm the
+  real outcome before telling the user it's done; getting these wrong is
+  costly, not just annoying.
+- A step you're about to report as finished where being wrong would send
+  you down a materially different fix.
+
+Skip it for routine navigation, discovery calls (`labels`, `ax_snapshot`),
+and clicks whose result you can already see in the return value.
 
 ## Media / players (learn from mistakes)
 
@@ -106,6 +154,17 @@ run demo → screencapture → read the PNG → fix → demo again
 See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
 
 Presence UI: blue while moving; brief **red** pulse on click; bottom neon “Agent controlling” bar.
+
+**For any change to presence itself specifically:** a single still screenshot
+proves nothing — the overlay is a moving, stateful thing, and its worst
+failure mode is disappearing exactly when something else steals window
+focus (which is normal, constant behavior in real agent use, not an edge
+case). Before calling presence work done, you must demo a sequence that
+includes a click landing on a *different* app plus several seconds of pure
+idle afterward, and confirm via multiple frames that the halo/banner are
+still there after both. A demo that never lets focus leave your own
+process will pass even when the real thing is broken — this exact gap
+shipped a bug once already.
 
 ## Docs in repo
 

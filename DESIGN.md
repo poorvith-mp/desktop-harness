@@ -34,6 +34,16 @@ Not an MCP server first:
 - Works from **any** agent/script that can run the CLI  
 - **MCP wrapper later** if we want tool-shaped RPCs; the core stays a thin local library  
 
+**SKILL.md has two on-disk copies that must stay identical:** repo-root
+`SKILL.md` (what you edit) and `src/desktop_harness/data/SKILL.md`
+(`pyproject.toml`'s `force-include`, the copy a built wheel ships). `desktop-harness
+skill` reads repo-root first so an editable-install edit takes effect
+immediately; the packaged copy is only the fallback for a real installed
+distribution with no repo tree alongside it. Editing only one has drifted
+silently more than once — when you change SKILL.md, copy it over
+`data/SKILL.md` too (or run the two-line diff/cp in the repo root) before
+committing.
+
 ---
 
 ## Architecture
@@ -82,7 +92,9 @@ Optional warm **daemon** for multi-step speed (token-authenticated local socket)
 3. **Window before full display**  
 4. **Compact trees**  
 5. **Element action before coords**  
-6. **No vision loop by default**  
+6. **No vision loop by default** — `verify()` (screenshot + AX read) is
+   reserved for actions where failure is silent (media transport,
+   consent-gated steps), not a step after every routine click  
 7. **Consent** before outbound / destructive actions  
 
 ---

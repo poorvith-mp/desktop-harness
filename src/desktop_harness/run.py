@@ -38,10 +38,19 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(run_doctor())
 
     if cmd == "skill":
-        # Prefer packaged data, then repo-root SKILL.md (editable install)
+        # Prefer the repo-root SKILL.md over the packaged data/SKILL.md
+        # copy. The two are meant to be identical (pyproject.toml
+        # force-includes root SKILL.md as data/SKILL.md at wheel-build
+        # time), but this repo is normally run as an editable install, so
+        # the packaged copy is a stale snapshot from whenever someone last
+        # built/committed it, not a live mirror — editing root SKILL.md
+        # alone silently did not change what this command emitted. Repo
+        # root first means the file a developer actually edits is always
+        # what ships; data/SKILL.md remains the fallback for a real
+        # installed distribution (built wheel, no repo tree alongside it).
         candidates = [
-            Path(__file__).resolve().parent / "data" / "SKILL.md",
             Path(__file__).resolve().parent.parent.parent / "SKILL.md",
+            Path(__file__).resolve().parent / "data" / "SKILL.md",
             Path.cwd() / "SKILL.md",
         ]
         for skill in candidates:
