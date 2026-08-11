@@ -12,7 +12,9 @@ from typing import Any
 
 import Quartz
 
-# Keycodes (US layout) for common chords
+# Keycodes (US layout) for common chords.
+# Aliases for symbols agents actually type ("-", "=", "[") so hotkey("cmd","-")
+# never fails mid-task — missing keys were a real Canva zoom hiccup.
 _KEYCODES = {
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
     "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
@@ -22,6 +24,15 @@ _KEYCODES = {
     "grave": 50, "delete": 51, "escape": 53, "command": 55, "shift": 56,
     "option": 58, "control": 59, "right": 124, "left": 123, "down": 125, "up": 126,
     "cmd": 55, "alt": 58, "ctrl": 59, "enter": 36, "esc": 53, "backspace": 51,
+    # Symbol aliases (same physical keys as equal/minus)
+    "-": 27, "=": 24, "+": 24,
+    # Brackets / punctuation (layer shortcuts, send-backward chords, etc.)
+    "[": 33, "]": 30, "bracketleft": 33, "bracketright": 30,
+    "comma": 43, "period": 47, "slash": 44, "backslash": 42,
+    ",": 43, ".": 47, "/": 44, "\\": 42,
+    # Navigation
+    "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+    "forwarddelete": 117, "fwddelete": 117,
 }
 
 # Optional agent presence overlay (ring + banner)

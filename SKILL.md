@@ -139,12 +139,27 @@ When the user says “play the song on screen”:
 Real Mac. **STOP and ask** before: messages, posts, purchases, deletes, security settings, passwords.  
 Harness also blocks password-manager-like app names unless `DH_ALLOW_SENSITIVE=1`.
 
+## Canvas / custom-drawn apps (Canva, Figma, games)
+
+AX labels often cover **chrome only** (tabs, menus), not objects on the
+canvas. That is not a harness failure — the OS tree has nothing useful to
+click. Path without losing capability:
+
+1. `screenshot(app=…)` once → read the image (vision)  
+2. Coordinate `click` / `drag` in **global** coords (`window.x/y` + image px)  
+3. Prefer **one multi-step daemon script** over many one-liners  
+4. Do **not** dual-agent the same pointer — one Mac, one cursor  
+
+Parallel *perception* (subagent reads a saved PNG while the main agent
+plans the next drag list) is fine. Parallel *control* of one app is not.
+
 ## Gotchas
 
 - Grant **Accessibility** + **Screen Recording** to the host that runs the CLI (`--doctor`)  
 - Coordinate clicks want the target app frontmost  
 - Electron apps may need screenshot fallback  
 - Cap tree size — don’t dump full AX  
+- Hotkeys: use `minus`/`equal` or `-`/`=`; also `[` `]` `home` `end` `pageup` `pagedown`
 
 ## Observe loop (optional — visual QA only)
 
