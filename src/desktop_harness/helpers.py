@@ -54,24 +54,28 @@ def click(*args, **kwargs):
 def right_click(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
+    _safety.audit("right_click", {"args": args[:2]})
     return _input.right_click(*args, **kwargs)
 
 
 def click_frame(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
+    _safety.audit("click_frame", {"args": args[:1]})
     return _input.click_frame(*args, **kwargs)
 
 
 def drag(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
+    _safety.audit("drag", {"args": args[:4]})
     return _input.drag(*args, **kwargs)
 
 
 def scroll(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
+    _safety.audit("scroll", {"args": args[:2]})
     return _input.scroll(*args, **kwargs)
 
 
@@ -343,6 +347,15 @@ def click_text(
 
 def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, Any]:
     """Find a text field by nearby label/title and set its value."""
+    from . import safety as _safety
+    # Same gate click_text applies. Without it the AX set_value path below wrote
+    # into a focused field with no check and no audit row, while the slower
+    # click+type fallback underneath it was gated — so the fast path was the
+    # unguarded one.
+    _safety.check_frontmost_allowed()
+    if app:
+        _safety.check_app_allowed(str(app))
+    _safety.audit("set_field", {"text": text, "app": app, "n": len(value)})
     hits = _ax.find(text, app=app, max_results=10)
     # prefer text fields
     ordered = sorted(
