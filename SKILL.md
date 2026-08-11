@@ -72,6 +72,19 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Meta: `wait`, `wait_stable`, `verify(note, app?)` — closes the loop after a
   UI-changing action (see below)
 
+## Prefer what's already open
+
+Before opening a browser tab or launching a new instance of anything: run
+`list_apps()` / `frontmost_app()` / `list_windows()` first and check for a
+native app that's already open and matches the task (Spotify, YT Music,
+Mail, Notes, Music, etc). Control that instance directly — it's faster and
+it's what the user is looking at. Only fall back to a browser when no
+matching native app is open, the native app genuinely can't do what's asked
+(e.g. no in-app search for a specific track), or the user's request needs an
+exact URL. Opening Chrome to a web version of something that was already
+open and visible on screen is the single most confusing thing this harness
+can do — it looks like the agent didn't see what the user saw.
+
 ## Verify, don't assume (mandatory after anything that changes the screen)
 
 `click_text`, `set_field`, and similar returning without an exception means
