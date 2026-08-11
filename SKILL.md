@@ -36,17 +36,19 @@ desktop-harness daemon status   # if stopped: desktop-harness daemon start &
 ## Efficiency (mandatory)
 
 1. Shell before GUI  
-2. `labels` / `ax_snapshot` / `click_text` before screenshots  
+2. **`labels` / `find` / `click_text` first** — cheap, targeted AX reads  
 3. Prefer `AXPress` path (`click_text`) over coordinates  
 4. Multi-step work → start/use the warm daemon  
 5. Never vision-loop by default  
+6. **`ax_snapshot` is a debug aid**, not the default eyes — a full snapshot is often ~10× more tokens than a screenshot and far more than `labels(limit=30)`. Use it when debugging why a find failed or you need raw roles/frames; cap `max_nodes` tightly. Everyday control should not dump the tree.
 
 ## Usage
 
 ```bash
 desktop-harness <<'PY'
 print(frontmost_app())
-print(labels()[:20])
+print(labels()[:20])          # cheap default read
+print(find("Reload")[:3])     # targeted; JSON-safe (no raw AX refs)
 open_app("Safari")
 click_text("Bookmarks")
 PY
@@ -63,7 +65,8 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 ## Helpers
 
 - Discovery: `list_apps`, `list_windows`, `frontmost_app`, `open_app`
-- See: `labels`, `button_labels`, `ax_snapshot`, `find`, `screenshot`, `media_transport`
+- See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
+  (`ax_snapshot` = debug dump; prefer `labels`/`find`)
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
 - Media: `ensure_media_playing(app?)` — **look once, act once** (see below)
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`

@@ -303,7 +303,7 @@ def click_text(
     if app:
         _safety.check_app_allowed(str(app))
     _safety.audit("click_text", {"text": text, "app": app, "exact": exact})
-    hits = _ax.find(text, app=app, role=role, max_results=12)
+    hits = _ax.find(text, app=app, role=role, max_results=12, include_el=True)
     if exact:
         q = text.strip().lower()
         hits = [
@@ -356,7 +356,7 @@ def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, 
     if app:
         _safety.check_app_allowed(str(app))
     _safety.audit("set_field", {"text": text, "app": app, "n": len(value)})
-    hits = _ax.find(text, app=app, max_results=10)
+    hits = _ax.find(text, app=app, max_results=10, include_el=True)
     # prefer text fields
     ordered = sorted(
         hits,

@@ -343,10 +343,15 @@ def find(
     *,
     role: str | None = None,
     max_results: int = 10,
+    include_el: bool = False,
 ) -> list[dict[str, Any]]:
     """Find nodes whose title/value/description contains text (case-insensitive).
 
     Uses a smaller interactive-first pass, then expands only if needed.
+
+    By default strips the internal ``_el`` (AXUIElementRef) so results are
+    JSON-serializable — same contract as ``ax_snapshot``. Pass
+    ``include_el=True`` only when a local press/set-value path needs the ref.
     """
     q = text.strip().lower()
     if not q:
@@ -427,7 +432,8 @@ def find(
     for score, n in ranked[:max_results]:
         item = {k: v for k, v in n.items() if k != "_el"}
         item["score"] = score
-        item["_el"] = n.get("_el")
+        if include_el:
+            item["_el"] = n.get("_el")
         out.append(item)
     return out
 

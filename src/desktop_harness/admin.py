@@ -78,5 +78,5 @@ def run_doctor() -> int:
         print("After granting Screen Recording, fully quit and restart the terminal / Grok.")
         return 1
     print("all clear — AX-first desktop control is ready.")
-    print("tip: prefer ax_snapshot / click_text over screenshot loops.")
+    print("tip: prefer labels / find / click_text over ax_snapshot or screenshot loops.")
     return 0

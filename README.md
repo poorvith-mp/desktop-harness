@@ -170,7 +170,8 @@ This drives a **real** computer.
 - Default blocks for password-manager-like apps (open + mutations while frontmost)  
 - Audit log: `~/.desktop-harness/audit.jsonl`  
 - Warm daemon: owner-only socket + token (see [SECURITY.md](./SECURITY.md))  
-- **Agents must ask** before send/post/pay/delete/security changes (see skill)
+- **Agents must ask** before send/post/pay/delete/security changes (see skill)  
+- **Voice scaffold** (`scripts/voice_session.py`) is gated separately: mutations need `--live`; without it only read-only tools run (see [SECURITY.md](./SECURITY.md))
 
 You can always grab the mouse; physical input wins.
 

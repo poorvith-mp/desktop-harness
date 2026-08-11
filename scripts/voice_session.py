@@ -28,13 +28,24 @@ WS_URL = f"wss://api.x.ai/v1/realtime?model={MODEL}"
 
 def main():
     ap = argparse.ArgumentParser(description="Voice → desktop-harness")
-    ap.add_argument("--dry-run", action="store_true", help="Execute no real GUI; print tool calls")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Never touch the Mac; print every tool call as a dry-run payload",
+    )
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "Allow mutating tools (click/type/hotkey/open_app/mouse). "
+            "Without this flag only list_apps / screen_labels / mouse_pos run."
+        ),
+    )
     ap.add_argument("--text", type=str, default=None, help="One-shot text turn (no mic)")
     ap.add_argument("--list-tools", action="store_true")
     args = ap.parse_args()
 
     from desktop_harness.voice_tools import (
-        SESSION_INSTRUCTIONS,
         TOOL_DEFINITIONS,
         execute,
     )
@@ -43,6 +54,9 @@ def main():
         for t in TOOL_DEFINITIONS:
             print(f"- {t['name']}: {t['description'][:80]}")
         return
+
+    if args.dry_run and args.live:
+        print("Note: --dry-run wins over --live (nothing will mutate the Mac).", file=sys.stderr)
 
     key = os.environ.get("XAI_API_KEY", "").strip()
     if not key and not args.dry_run:
@@ -59,17 +73,22 @@ def main():
         sys.exit(2)
 
     if args.dry_run and not key:
-        # local demo of tool executor only
-        print("dry-run local tools (no network)")
+        # local demo of tool executor only (no network, no --live)
+        print("local tools without --live (read-only real; mutations refused)")
         demos = [
             ("list_apps", {}),
             ("mouse_pos", {}),
             ("screen_labels", {"limit": 10}),
+            ("click_text", {"text": "would-not-run"}),  # must refuse without --live
         ]
         for name, args_ in demos:
-            out = execute(name, args_, dry_run=False)  # list_apps is read-only ok
+            out = execute(name, args_, dry_run=False, live=False)
             print(f"\n>> {name} {args_}\n{out[:500]}")
-        print("\nTo run live voice: export XAI_API_KEY=… && python scripts/voice_session.py")
+        print(
+            "\nSafe default: mutations need --live.\n"
+            "Live voice: export XAI_API_KEY=… && python scripts/voice_session.py --live\n"
+            "Network dry-run: export XAI_API_KEY=… && python scripts/voice_session.py --dry-run --text 'demo'"
+        )
         return
 
     try:
@@ -78,10 +97,21 @@ def main():
         print("pip install websockets", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(run_session(key, text=args.text, dry_run=args.dry_run))
+    if not args.dry_run and not args.live:
+        print(
+            "Mutating tools are gated (no --live). "
+            "Read-only tools still run. Pass --live only when you mean it.",
+            file=sys.stderr,
+        )
+
+    asyncio.run(
+        run_session(key, text=args.text, dry_run=args.dry_run, live=args.live)
+    )
 
 
-async def run_session(api_key: str, *, text: str | None, dry_run: bool):
+async def run_session(
+    api_key: str, *, text: str | None, dry_run: bool, live: bool = False
+):
     import websockets
     from desktop_harness.voice_tools import (
         SESSION_INSTRUCTIONS,
@@ -91,6 +121,8 @@ async def run_session(api_key: str, *, text: str | None, dry_run: bool):
 
     headers = {"Authorization": f"Bearer {api_key}"}
     print(f"connecting {WS_URL} …")
+    mode = "dry-run" if dry_run else ("live" if live else "read-only")
+    print(f"voice tool mode: {mode}")
     async with websockets.connect(
         WS_URL,
         additional_headers=headers,
@@ -151,7 +183,7 @@ async def run_session(api_key: str, *, text: str | None, dry_run: bool):
                     call_id = event.get("call_id")
                     arguments = event.get("arguments") or "{}"
                     print(f"\n[tool] {name}({arguments})")
-                    result = execute(name, arguments, dry_run=dry_run)
+                    result = execute(name, arguments, dry_run=dry_run, live=live)
                     print(f"[tool result] {result[:300]}")
                     await ws.send(json.dumps({
                         "type": "conversation.item.create",

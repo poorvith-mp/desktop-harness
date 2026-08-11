@@ -135,6 +135,23 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+# Read-only tools may run without --live. Everything else is a Mac mutation
+# and needs an explicit live opt-in — consent in the model prompt alone is not
+# a gate (see GitHub issue #3).
+READ_ONLY_TOOLS = frozenset({"list_apps", "screen_labels", "mouse_pos"})
+MUTATING_TOOLS = frozenset(
+    {
+        "open_app",
+        "click_text",
+        "type_text",
+        "hotkey",
+        "move_mouse",
+        "click_xy",
+        "wiggle_mouse",
+    }
+)
+
+
 def _ok(data: Any) -> str:
     return json.dumps({"ok": True, "result": data}, default=str)
 
@@ -143,8 +160,19 @@ def _err(msg: str) -> str:
     return json.dumps({"ok": False, "error": msg})
 
 
-def execute(name: str, arguments: dict[str, Any] | str, *, dry_run: bool = False) -> str:
-    """Run a voice tool. Returns JSON string for function_call_output."""
+def execute(
+    name: str,
+    arguments: dict[str, Any] | str,
+    *,
+    dry_run: bool = False,
+    live: bool = False,
+) -> str:
+    """Run a voice tool. Returns JSON string for function_call_output.
+
+    Safety: mutating tools refuse unless ``live=True`` (or the call is a
+    dry-run that never touches the Mac). Read-only tools always run when not
+    dry-running. This is enforced in code — not only in the model prompt.
+    """
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments) if arguments else {}
@@ -154,6 +182,14 @@ def execute(name: str, arguments: dict[str, Any] | str, *, dry_run: bool = False
 
     if dry_run:
         return _ok({"dry_run": True, "tool": name, "arguments": arguments})
+
+    if name in MUTATING_TOOLS and not live:
+        return _err(
+            f"refused {name!r}: voice scaffold mutates the Mac only with "
+            f"--live (or live=True). Re-run with --live after the user clearly "
+            f"asks for that action. Read-only tools (list_apps, screen_labels, "
+            f"mouse_pos) work without --live."
+        )
 
     try:
         if name == "list_apps":
@@ -211,12 +247,12 @@ def execute(name: str, arguments: dict[str, Any] | str, *, dry_run: bool = False
         return _err(f"{type(e).__name__}: {e}")
 
 
-def handlers(*, dry_run: bool = False) -> dict[str, Callable[..., str]]:
+def handlers(*, dry_run: bool = False, live: bool = False) -> dict[str, Callable[..., str]]:
     """Map name → callable(**kwargs) returning JSON string."""
 
     def make(n: str):
         def _fn(**kwargs):
-            return execute(n, kwargs, dry_run=dry_run)
+            return execute(n, kwargs, dry_run=dry_run, live=live)
         return _fn
 
     return {t["name"]: make(t["name"]) for t in TOOL_DEFINITIONS}

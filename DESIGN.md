@@ -63,10 +63,12 @@ Optional warm **daemon** for multi-step speed (token-authenticated local socket)
 
 ### Perception contract
 
-1. **`ax_snapshot`** — compact interactive nodes (`role`, `title`, `value`, `frame`, …)  
-2. **`find` / `click_text`** — match by label; prefer `AXPress`  
-3. **`screenshot`** — window-scoped when AX is empty  
+1. **`labels` / `find` / `click_text`** — default eyes; targeted, cheap, JSON-safe  
+2. **`ax_snapshot`** — full interactive dump for **debug only** (often far more tokens than a screenshot; cap `max_nodes`)  
+3. **`screenshot`** — window-scoped when AX is empty or custom-drawn  
 4. Coordinates only when no AX action exists  
+
+Note: `AXPress` works on a **background** app without focus steal — the AX path already delivers the “background control” roadmap item for pressable controls.
 
 ### Action contract
 
