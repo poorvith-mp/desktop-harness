@@ -515,6 +515,15 @@ def ensure() -> None:
     show()
 
 
+def active() -> bool:
+    """True if the halo/banner are currently shown.
+
+    Lets a caller outside this module (the daemon's idle loop) check state
+    without reaching into the private `_active` global directly.
+    """
+    return _active
+
+
 def pulse():
     import Quartz
     ev = Quartz.CGEventCreate(None)

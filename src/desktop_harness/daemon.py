@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import socket
+import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -29,6 +30,18 @@ TOKEN_PATH = Path(os.environ.get(
     "DH_TOKEN_PATH",
     Path.home() / ".desktop-harness" / "daemon.token",
 ))
+
+# Presence (halo + "Agent controlling" pill) is shown by scripts run through
+# this daemon and is only ever hidden by a script explicitly calling
+# hide_agent_presence(). The daemon outlives any single script — if the
+# calling agent's turn just ends (chat marks the task done, no more calls
+# come in) nothing else revisits that state, so the overlay sits on screen
+# indefinitely. ACCEPT_POLL_SECONDS makes the accept() loop below wake up
+# periodically even with no request pending; PRESENCE_IDLE_HIDE_SECONDS is
+# how long with no exec request before it self-clears. Both run on the
+# daemon's single (main) thread — required, see presence.py's threading note.
+ACCEPT_POLL_SECONDS = 3.0
+PRESENCE_IDLE_HIDE_SECONDS = float(os.environ.get("DH_PRESENCE_IDLE_HIDE", "20"))
 
 
 def socket_path() -> Path:
@@ -132,6 +145,12 @@ def serve() -> None:
     srv.bind(str(SOCKET_PATH))
     os.chmod(SOCKET_PATH, 0o600)
     srv.listen(8)
+    # Times out accept() periodically so the idle-presence check below runs
+    # even when no request comes in; the *accepted* connection socket does
+    # not inherit this (Python only forces blocking on it when no global
+    # default timeout is set), so in-flight requests/long-running scripts
+    # are unaffected.
+    srv.settimeout(ACCEPT_POLL_SECONDS)
     PID_PATH.write_text(str(os.getpid()))
     try:
         os.chmod(PID_PATH, 0o600)
@@ -140,9 +159,24 @@ def serve() -> None:
     print(f"desktop-harness daemon listening on {SOCKET_PATH}", flush=True)
     print(f"token: {TOKEN_PATH} (0600)", flush=True)
 
+    last_activity = time.monotonic()
     try:
         while True:
-            conn, _ = srv.accept()
+            try:
+                conn, _ = srv.accept()
+            except (TimeoutError, socket.timeout):
+                # No request in a while — self-clear a stale presence
+                # overlay instead of leaving it on screen until some
+                # future script happens to call hide_agent_presence().
+                idle = time.monotonic() - last_activity
+                if idle >= PRESENCE_IDLE_HIDE_SECONDS:
+                    try:
+                        from . import presence
+                        if presence.active():
+                            presence.hide()
+                    except Exception:
+                        pass
+                continue
             with conn:
                 buf = b""
                 while b"\n" not in buf:
@@ -187,6 +221,7 @@ def serve() -> None:
                     except Exception:
                         ok = False
                         err_msg = traceback.format_exc()
+                    last_activity = time.monotonic()
                     resp = {
                         "ok": ok,
                         "stdout": out_b.getvalue(),
