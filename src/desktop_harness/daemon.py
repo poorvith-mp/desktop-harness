@@ -178,6 +178,17 @@ def serve() -> None:
                         pass
                 continue
             with conn:
+                def _reply(payload: bytes | dict) -> None:
+                    # Client may have closed (timeout, killed agent) — never
+                    # let a BrokenPipe take down the whole daemon; that left
+                    # agents hung on a dead socket looking like "shell stuck".
+                    try:
+                        if isinstance(payload, dict):
+                            payload = (json.dumps(payload) + "\n").encode()
+                        conn.sendall(payload)
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        pass
+
                 buf = b""
                 while b"\n" not in buf:
                     chunk = conn.recv(1 << 20)
@@ -189,22 +200,18 @@ def serve() -> None:
                 try:
                     req = json.loads(buf.decode())
                 except json.JSONDecodeError as e:
-                    conn.sendall(
-                        (json.dumps({"ok": False, "error": str(e)}) + "\n").encode()
-                    )
+                    _reply({"ok": False, "error": str(e)})
                     continue
                 # Auth
                 if req.get("token") != token:
-                    conn.sendall(
-                        b'{"ok":false,"error":"unauthorized (bad or missing token)"}\n'
-                    )
+                    _reply(b'{"ok":false,"error":"unauthorized (bad or missing token)"}\n')
                     continue
                 op = req.get("op")
                 if op == "ping":
-                    conn.sendall(b'{"ok":true,"pong":true}\n')
+                    _reply(b'{"ok":true,"pong":true}\n')
                     continue
                 if op == "quit":
-                    conn.sendall(b'{"ok":true}\n')
+                    _reply(b'{"ok":true}\n')
                     break
                 if op == "exec":
                     code = req.get("code") or ""
@@ -222,18 +229,13 @@ def serve() -> None:
                         ok = False
                         err_msg = traceback.format_exc()
                     last_activity = time.monotonic()
-                    resp = {
+                    _reply({
                         "ok": ok,
                         "stdout": out_b.getvalue(),
                         "stderr": err_b.getvalue() + err_msg,
-                    }
-                    conn.sendall((json.dumps(resp) + "\n").encode())
+                    })
                     continue
-                conn.sendall(
-                    (
-                        json.dumps({"ok": False, "error": f"unknown op {op}"}) + "\n"
-                    ).encode()
-                )
+                _reply({"ok": False, "error": f"unknown op {op}"})
     finally:
         srv.close()
         for p in (SOCKET_PATH, PID_PATH):

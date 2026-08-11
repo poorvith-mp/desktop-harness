@@ -124,6 +124,14 @@ def hotkey(*args, **kwargs):
     return _input.hotkey(*args, **kwargs)
 
 
+def media_key(name: str = "playpause", **kwargs):
+    """System media key (playpause/next/prev). Fallback when AX has no Play."""
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    _safety.audit("media_key", {"name": name})
+    return _input.media_key(name, **kwargs)
+
+
 def type_text(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
@@ -404,13 +412,15 @@ def media_transport(app: str | int | None = None) -> dict[str, Any]:
 
 
 def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
-    """If transport shows Pause, do nothing. If Play, press it once. Never Space.
+    """If transport shows Pause, do nothing. If Play, press it once.
 
-    One AX walk to read state + locate the Play button, one more (via
-    wait_stable + media_transport) to confirm the press landed — not the
-    3-4 separate full-tree walks a naive read-then-click_text()-then-reread
-    sequence costs, since click_text would otherwise re-walk the tree from
-    scratch to relocate a button this function already just found.
+    Order (no thrash — one path only):
+      1. AX: Pause visible → already playing → noop
+      2. AX: exact Play button → press once → re-read
+      3. Web/Electron fallback: system ``media_key('playpause')`` once when
+         AX has no transport (YT Music Safari Web App, etc.)
+
+    Never spam Space. Never multi-retry in one call.
     """
     from . import safety as _safety
     nodes = ax_snapshot(app, max_nodes=400, interactive_only=True, include_el=True)
@@ -437,9 +447,36 @@ def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
         wait_stable(0.3)
         again = media_transport(app)
         return {"action": "pressed_play", "before": status, "after": again, "hit": hit}
-    raise RuntimeError(
-        f"cannot determine transport state; button sample: {status.get('labels')}"
-    )
+
+    # Unknown: web apps often expose zero Play/Pause labels. One media-key
+    # pulse is the capable path without thrashing AX or Space.
+    _safety.check_frontmost_allowed()
+    if app is not None:
+        _safety.check_app_allowed(str(app))
+        # Focus the player so the media key reaches it when possible
+        try:
+            if isinstance(app, int):
+                info = find_app(app)
+                if info and info.get("name"):
+                    open_app(info["name"])
+            else:
+                open_app(str(app))
+            wait_stable(0.15)
+        except Exception:
+            pass
+    media_key("playpause")
+    wait_stable(0.4)
+    again = media_transport(app)
+    return {
+        "action": "media_key_playpause",
+        "before": status,
+        "after": again,
+        "note": (
+            "AX had no Play/Pause (common for YT Music web app). "
+            "Sent one system media-key. If still silent, click the on-screen "
+            "Play with click_in_window after a screenshot."
+        ),
+    }
 
 
 def click_text(

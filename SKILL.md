@@ -68,7 +68,8 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
   (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
-- Media: `ensure_media_playing(app?)` — **look once, act once** (see below)
+- Media: `ensure_media_playing(app?)` — **look once, act once** (see below);  
+  `media_key("playpause"|"next"|"prev")` when AX has no Play (YT Music web app)
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
@@ -128,13 +129,14 @@ and clicks whose result you can already see in the return value.
 
 When the user says “play the song on screen”:
 
-1. **Read state first:** `media_transport()` or look for an exact **Pause** / **Play** button.  
+1. Prefer the **already-open** player (`list_apps` / `frontmost_app`) — e.g. **YT Music**, not a new Chrome tab.  
+2. **Read state first:** `media_transport(app?)` or look for exact **Pause** / **Play**.  
    - **Pause visible** → already playing → **stop**. Do not click again.  
-2. **One action only** if paused: `ensure_media_playing()` or `click_text("Play", role="AXButton", exact=True)`.  
-3. **Never** spam `hotkey("space")` or media keys as a “try everything” loop — Space **toggles** and will pause what you just started.  
-4. **Never** match loose `"Play"` against **Play all**, **Playing from**, or the next track in a list unless the user asked to change songs.  
-5. **Do not** retry 3–4 different click strategies in one turn after success. Verify once; if playing, done.  
-6. Changing track / “Play all” requires an **explicit** user request.
+3. **One action only:** `ensure_media_playing(app?)` (AX Play, else one system `media_key`).  
+4. **Never** spam `hotkey("space")` or multi-retry loops — Space **toggles**.  
+5. **Never** match loose `"Play"` against **Play all** / **Playing from**.  
+6. YT Music is a **Safari Web App** — AX often has **no** Play button; `ensure_media_playing` / `media_key` is correct, not a long AX thrash.  
+7. Changing track requires an **explicit** user request.
 
 ## Consent / safety
 

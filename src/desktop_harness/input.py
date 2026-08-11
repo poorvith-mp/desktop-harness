@@ -287,6 +287,62 @@ def hotkey(*keys: str, settle: float = 0.05):
     time.sleep(settle)
 
 
+# System media keys (NX_KEYTYPE_*) — work for Music, YT Music web apps, etc.
+# when AX exposes no Play/Pause control.
+_MEDIA_KEYCODES = {
+    "play": 16,
+    "playpause": 16,
+    "next": 17,
+    "previous": 18,
+    "prev": 18,
+    "fast": 19,
+    "rewind": 20,
+}
+
+
+def media_key(name: str = "playpause", *, settle: float = 0.05) -> str:
+    """Post a system media key (play/pause, next, previous).
+
+    Use when the player is a web view / Electron app with no AX Play button
+    (YT Music Safari Web App is the classic case). Prefer
+    ``ensure_media_playing`` first for native AX players.
+    """
+    code = _MEDIA_KEYCODES.get(name.lower().strip())
+    if code is None:
+        raise ValueError(
+            f"unknown media key {name!r}; expected one of {sorted(_MEDIA_KEYCODES)}"
+        )
+    # NSEvent system-defined media-key packet → CGEvent
+    try:
+        from AppKit import NSEvent, NSSystemDefined
+    except ImportError as e:
+        raise RuntimeError("AppKit required for media_key") from e
+
+    for down in (True, False):
+        flags = 0xA00 if down else 0xB00
+        data1 = (code << 16) | ((0xA if down else 0xB) << 8)
+        ev = NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
+            NSSystemDefined,
+            (0.0, 0.0),
+            flags,
+            0,
+            0,
+            None,
+            8,  # subtype: system-defined media
+            data1,
+            -1,
+        )
+        if ev is None:
+            raise RuntimeError("failed to create media key NSEvent")
+        cge = ev.CGEvent()
+        if cge is None:
+            raise RuntimeError("failed to get CGEvent from media key NSEvent")
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, cge)
+        time.sleep(0.02)
+    time.sleep(settle)
+    return name
+
+
 def type_text(text: str, *, delay: float = 0.008):
     """Type unicode via CGEvent keyboard with unicode string."""
     for ch in text:
