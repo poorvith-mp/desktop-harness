@@ -76,7 +76,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
 - **Stage (web, off-to-the-side):** `open_stage(url)` / `close_stage()` — small dedicated Chrome + a live picture **only** for that window. Do **not** `show_monitor()` when the real app is already on screen.
-- Presence: ice ring on the real cursor + small bottom **Working** chip (`DH_PRESENCE=0` to disable);
+- Presence (agentic only): ice ring on the cursor, ice **frame** around the window being driven, small **Working** chip. Off: `DH_PRESENCE=0`. No second picture of an on-screen app.
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
   isn't permanent — call it anyway when you know you're done)

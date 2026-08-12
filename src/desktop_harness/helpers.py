@@ -40,6 +40,12 @@ def activate(*args, **kwargs):
     # Follow only if the live view is already up — do not pop it just
     # because we focused Ghostty after a task.
     try:
+        if name is not None and not isinstance(name, int):
+            from . import presence as _presence
+            if _presence.active() and str(name).lower() not in (
+                "ghostty", "terminal", "iterm2",
+            ):
+                _presence.ring_window(str(name))
         if _stage.monitor_active() and name is not None and not isinstance(name, int):
             _stage.follow(str(name))
             _stage.stage_note(f"open {name}")
@@ -81,6 +87,12 @@ def _watch(note: str | None = None, app: str | int | None = None) -> None:
     of that app — the user can already see it.
     """
     try:
+        if app is not None and not isinstance(app, int):
+            from . import presence as _presence
+            if _presence.active() and str(app).lower() not in (
+                "ghostty", "terminal", "iterm2",
+            ):
+                _presence.ring_window(str(app))
         if not _stage.monitor_active():
             return
         if note:

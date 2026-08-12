@@ -16,10 +16,15 @@ from typing import Any
 
 _halo = None
 _banner = None
+_frame = None  # ice border around the window being driven
 _app = None
 _active = False
 _last_cg: tuple[float, float] | None = None
 _mode = "blue"  # blue | red
+_frame_target: tuple[float, float, float, float] | None = None  # x,y,w,h CG
+
+# Grok ice — same family as the cursor halo
+_ICE = (0.45, 0.78, 1.00)
 
 # IMPORTANT — main thread only. AppKit asserts on non-main-thread window
 # calls and hard-aborts the whole process (SIGABRT, unrecoverable, no
@@ -397,6 +402,8 @@ def keep_alive(seconds: float) -> None:
                 _halo.orderFrontRegardless()
             if _banner is not None:
                 _banner.orderFrontRegardless()
+            if _frame is not None:
+                _frame.orderFrontRegardless()
             try:
                 from . import stage as _stage
                 _stage.tick()
@@ -440,6 +447,14 @@ def show(x: float | None = None, y: float | None = None) -> bool:
 
         _active = True
         _place_halo(x, y, _SIZE)
+        try:
+            from . import windows as _win
+            front = _win.frontmost_app() or {}
+            name = front.get("name")
+            if name and name.lower() not in ("ghostty", "terminal", "iterm2"):
+                ring_window(name)
+        except Exception:
+            pass
         _pump(n=10, seconds=0.03)
         return True
     except Exception as e:
@@ -497,7 +512,7 @@ def click_flash(x: float, y: float) -> None:
 
 
 def hide() -> None:
-    global _halo, _banner, _active, _last_cg
+    global _halo, _banner, _frame, _active, _last_cg, _frame_target
     _active = False
     try:
         if _halo is not None:
@@ -506,9 +521,13 @@ def hide() -> None:
         if _banner is not None:
             _banner.orderOut_(None)
             _banner = None
+        if _frame is not None:
+            _frame.orderOut_(None)
+            _frame = None
     except Exception:
         pass
     _last_cg = None
+    _frame_target = None
     _pump(n=3, seconds=0.01)
 
 
@@ -534,6 +553,114 @@ def pulse():
     ev = Quartz.CGEventCreate(None)
     p = Quartz.CGEventGetLocation(ev)
     click_flash(float(p.x), float(p.y))
+
+
+def _cg_rect_to_cocoa(x: float, y: float, w: float, h: float):
+    """CG top-left → Cocoa bottom-left for the main screen."""
+    from AppKit import NSScreen
+    main = NSScreen.mainScreen()
+    if main is None:
+        return x, -y - h, w, h
+    mf = main.frame()
+    cocoa_x = float(mf.origin.x) + float(x)
+    cocoa_y = float(mf.origin.y) + float(mf.size.height) - float(y) - float(h)
+    return cocoa_x, cocoa_y, float(w), float(h)
+
+
+class _FrameView:
+    """Hollow ice rectangle — Google-style agent chrome, Grok color."""
+    _cls = None
+
+    @classmethod
+    def view_class(cls):
+        if cls._cls is not None:
+            return cls._cls
+        from AppKit import NSView
+
+        class FrameView(NSView):
+            def isFlipped(self):
+                return False
+
+            def drawRect_(self, rect):
+                from AppKit import NSBezierPath, NSColor, NSRectFill
+                NSColor.clearColor().set()
+                NSRectFill(self.bounds())
+                b = self.bounds()
+                inset = 3.0
+                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    ((inset, inset), (b.size.width - 2 * inset, b.size.height - 2 * inset)),
+                    10.0,
+                    10.0,
+                )
+                path.setLineWidth_(3.0)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    _ICE[0], _ICE[1], _ICE[2], 0.92
+                ).set()
+                path.stroke()
+                glow = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    ((1.0, 1.0), (b.size.width - 2.0, b.size.height - 2.0)),
+                    12.0,
+                    12.0,
+                )
+                glow.setLineWidth_(6.0)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    _ICE[0], _ICE[1], _ICE[2], 0.18
+                ).set()
+                glow.stroke()
+
+        cls._cls = FrameView
+        return cls._cls
+
+
+def ring_window(app: str | int | None = None, window_id: int | None = None) -> bool:
+    """Draw a click-through ice frame around the window the agent is driving.
+
+    Only while presence is active. No second picture of the window.
+    """
+    global _frame, _frame_target
+    if not enabled() or not _active:
+        return False
+    try:
+        from . import windows as _win
+        if window_id is not None:
+            fr = None
+            for w in _win.list_windows():
+                if w.get("id") == int(window_id):
+                    fr = w
+                    break
+            if fr is None:
+                return False
+        else:
+            fr = _win.window_frame(app)
+        x, y, w, h = float(fr["x"]), float(fr["y"]), float(fr["w"]), float(fr["h"])
+        _frame_target = (x, y, w, h)
+        cx, cy, cw, ch = _cg_rect_to_cocoa(x, y, w, h)
+        _ensure_app()
+        from AppKit import NSMakeRect, NSPanel, NSWindowStyleMaskBorderless
+        if _frame is None:
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(cx, cy, cw, ch),
+                NSWindowStyleMaskBorderless,
+                2,
+                False,
+            )
+            _style_panel(panel, boost=1)
+            View = _FrameView.view_class()
+            view = View.alloc().initWithFrame_(NSMakeRect(0, 0, cw, ch))
+            panel.setContentView_(view)
+            _frame = panel
+        else:
+            _frame.setFrame_display_(NSMakeRect(cx, cy, cw, ch), False)
+            try:
+                _frame.contentView().setFrame_(NSMakeRect(0, 0, cw, ch))
+                _frame.contentView().setNeedsDisplay_(True)
+            except Exception:
+                pass
+        _frame.orderFrontRegardless()
+        _pump(n=2, seconds=0.006)
+        return True
+    except Exception:
+        return False
 
 
 # --- wire input.py overlay API ---
