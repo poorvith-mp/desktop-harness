@@ -4,7 +4,7 @@ Design rules (from observe loop):
   - NEVER draw a second pointer shape (dual-cursor lag is unusable)
   - System cursor stays; we only draw a soft HALO locked to the warp target
   - Move = cool ice ring; click = brief amber flash, then ice again
-  - Compact glass island under the menu bar (not on the Dock / mini-player)
+  - Large glass island above the Dock (discoverable; not under the notch)
 
 DH_PRESENCE=0 disables everything.
 """
@@ -247,7 +247,7 @@ def _make_banner():
     global _banner
     from AppKit import (
         NSColor, NSMakeRect, NSPanel, NSTextField, NSFont, NSView,
-        NSWindowStyleMaskBorderless, NSLeftTextAlignment,
+        NSWindowStyleMaskBorderless, NSCenterTextAlignment,
     )
     from Quartz import CGColorCreateGenericRGB
 
@@ -266,22 +266,21 @@ def _make_banner():
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
 
-    # Soft bloom — quieter than the old neon wash
     bloom = NSView.alloc().initWithFrame_(
-        NSMakeRect(pad - 8, pad - 6, w + 16, h + 12)
+        NSMakeRect(pad - 10, pad - 8, w + 20, h + 16)
     )
     bloom.setWantsLayer_(True)
     if bloom.layer() is not None:
-        bloom.layer().setCornerRadius_((h + 12) / 2.0)
+        bloom.layer().setCornerRadius_((h + 16) / 2.0)
         bloom.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.22, 0.42, 0.78, 0.14)
+            CGColorCreateGenericRGB(0.22, 0.48, 0.95, 0.22)
         )
         try:
-            bloom.layer().setShadowOpacity_(0.9)
-            bloom.layer().setShadowRadius_(16.0)
+            bloom.layer().setShadowOpacity_(1.0)
+            bloom.layer().setShadowRadius_(22.0)
             bloom.layer().setShadowOffset_((0, 0))
             bloom.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.35, 0.62, 1.0, 0.85)
+                CGColorCreateGenericRGB(0.30, 0.62, 1.0, 1.0)
             )
         except Exception:
             pass
@@ -291,56 +290,55 @@ def _make_banner():
     pill.setWantsLayer_(True)
     if pill.layer() is not None:
         pill.layer().setCornerRadius_(h / 2.0)
-        # Dark glass, not a solid black brick
         pill.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.07, 0.08, 0.10, 0.78)
+            CGColorCreateGenericRGB(0.06, 0.07, 0.10, 0.90)
         )
-        pill.layer().setBorderWidth_(0.8)
+        pill.layer().setBorderWidth_(1.2)
         pill.layer().setBorderColor_(
-            CGColorCreateGenericRGB(0.78, 0.88, 1.0, 0.38)
+            CGColorCreateGenericRGB(0.55, 0.80, 1.0, 0.85)
         )
         try:
-            pill.layer().setShadowOpacity_(0.7)
-            pill.layer().setShadowRadius_(10.0)
-            pill.layer().setShadowOffset_((0, -1))
+            pill.layer().setShadowOpacity_(0.95)
+            pill.layer().setShadowRadius_(16.0)
+            pill.layer().setShadowOffset_((0, 0))
             pill.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.0, 0.0, 0.0, 0.55)
+                CGColorCreateGenericRGB(0.28, 0.58, 1.0, 0.95)
             )
         except Exception:
             pass
 
-    pip = NSView.alloc().initWithFrame_(NSMakeRect(12, (h - 6) / 2.0, 6, 6))
+    pip = NSView.alloc().initWithFrame_(NSMakeRect(18, (h - 9) / 2.0, 9, 9))
     pip.setWantsLayer_(True)
     if pip.layer() is not None:
-        pip.layer().setCornerRadius_(3.0)
+        pip.layer().setCornerRadius_(4.5)
         pip.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.55, 0.82, 1.0, 1.0)
+            CGColorCreateGenericRGB(0.50, 0.82, 1.0, 1.0)
         )
         try:
             pip.layer().setShadowOpacity_(1.0)
-            pip.layer().setShadowRadius_(5.0)
+            pip.layer().setShadowRadius_(7.0)
             pip.layer().setShadowOffset_((0, 0))
             pip.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.45, 0.75, 1.0, 0.95)
+                CGColorCreateGenericRGB(0.45, 0.78, 1.0, 1.0)
             )
         except Exception:
             pass
     pill.addSubview_(pip)
 
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(24, 6, w - 36, h - 12))
-    label.setStringValue_("Hands off")
+    label = NSTextField.alloc().initWithFrame_(NSMakeRect(34, 8, w - 50, h - 16))
+    label.setStringValue_("Hands off — agent")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
-    label.setAlignment_(NSLeftTextAlignment)
+    label.setAlignment_(NSCenterTextAlignment)
     try:
-        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.96, 0.94))
-        label.setFont_(NSFont.systemFontOfSize_weight_(12.0, 0.35))
+        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.98, 0.98))
+        label.setFont_(NSFont.systemFontOfSize_weight_(14.0, 0.40))
     except Exception:
         try:
             label.setTextColor_(NSColor.whiteColor())
-            label.setFont_(NSFont.systemFontOfSize_(12.0))
+            label.setFont_(NSFont.systemFontOfSize_(14.0))
         except Exception:
             pass
     pill.addSubview_(label)
@@ -353,17 +351,17 @@ def _make_banner():
 
 
 def _banner_layout():
-    """Top-center island, just under the menu bar — never on the Dock or mini-player."""
+    """Bottom-center island, fully above the Dock — large enough to read at a glance."""
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
-    pad = 16.0
-    w, h = 118.0, 28.0
+    pad = 22.0
+    w, h = 268.0, 44.0
     if screen is None:
-        return 400.0, 900.0, w + 2 * pad, h + 2 * pad, w, h, pad
+        return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    margin = 10.0
+    margin = 18.0  # above Dock, inside visibleFrame
     pill_x = vf.origin.x + (vf.size.width - w) / 2.0
-    pill_y = vf.origin.y + vf.size.height - h - margin
+    pill_y = vf.origin.y + margin
     return (
         pill_x - pad,
         pill_y - pad,

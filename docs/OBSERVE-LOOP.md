@@ -53,7 +53,7 @@ Take many frames while moving so lag/desync shows up:
 - [ ] **One** cursor only — soft halo around system pointer, never a second arrow  
 - [ ] Halo locked to warp target (no “dragging a second cursor”)  
 - [ ] Move = ice ring; click = brief amber then ice  
-- [ ] Compact glass island under the menu bar (not on Dock / mini-player)  
+- [ ] Large glass island above the Dock (not under the notch)  
 - [ ] Hands-off meaning is obvious  
 - [ ] Multiple frames reviewed, not one still
 - [ ] **A click lands on a different app mid-sequence, and the demo keeps

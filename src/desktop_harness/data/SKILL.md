@@ -75,7 +75,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
-- Presence: ice ring on the real cursor + compact top **Hands off** island (`DH_PRESENCE=0` to disable);
+- Presence: ice ring on the real cursor + large bottom **Hands off — agent** island (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
   isn't permanent — call it anyway when you know you're done)
@@ -188,7 +188,7 @@ run demo → screencapture → read the PNG → fix → demo again
 
 See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
 
-Presence UI: ice ring while moving; brief **amber** pulse on click; compact top **Hands off** island (never a second arrow).
+Presence UI: ice ring while moving; brief **amber** pulse on click; large bottom **Hands off — agent** island (never a second arrow).
 
 **For any change to presence itself specifically:** a single still screenshot
 proves nothing — the overlay is a moving, stateful thing, and its worst
