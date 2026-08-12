@@ -68,16 +68,23 @@ move_to = _input.move_to
 move_by = _input.move_by
 wiggle = _input.wiggle
 def _watch(note: str | None = None, app: str | int | None = None) -> None:
-    """Keep the live monitor pointed at what we just touched. Never raises."""
+    """Keep the live monitor pointed at what we just touched. Never raises.
+
+    Auto-shows the Agent view on the first controlling action so a skill
+    that forgot show_monitor() still makes the work visible.
+    """
     try:
+        if not _stage.monitor_active():
+            _stage.show_monitor()
         if note:
             _stage.stage_note(note)
-        if app is not None:
-            name = str(app) if not isinstance(app, int) else None
-            if name:
-                _stage.follow(name)
-        if _stage.monitor_active():
-            _stage.refresh_monitor(force=False)
+        if app is not None and not isinstance(app, int):
+            _stage.follow(str(app))
+        elif app is None:
+            front = frontmost_app() or {}
+            if front.get("name"):
+                _stage.follow(front["name"])
+        _stage.refresh_monitor(force=True)
     except Exception:
         pass
 

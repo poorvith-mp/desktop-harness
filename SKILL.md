@@ -90,6 +90,8 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 
 The user stays in Grok Build. A small **Agent view** pop-up shows a live
 picture of the window you are driving — **any app**, not just a browser.
+It auto-opens on the first click/open/type. Still call `show_monitor()` at
+the start of a sequence so it appears immediately.
 
 ```python
 show_monitor()

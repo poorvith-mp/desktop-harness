@@ -94,15 +94,25 @@ def window_frame(app: str | int | None = None) -> dict[str, Any]:
     matched: list[dict[str, Any]] = []
     q = (name or "").lower()
     for w in wins:
+        owner = (w.get("app") or "").lower()
+        # Owner / pid only — never match because some *other* app's title
+        # mentions us (a Ghostty tab named "Notes" is not Notes.app).
         if pid is not None and int(w.get("pid") or 0) == int(pid):
             matched.append(w)
             continue
-        if q and q in (w.get("app") or "").lower():
+        if q and (owner == q or q in owner):
             matched.append(w)
-    # Fallback: any on-screen window if caller asked for frontmost and
-    # ownership metadata was briefly stale (CGWindowList vs NSWorkspace).
     if not matched and app is None and wins:
-        matched = list(wins)
+        front = frontmost_app() or {}
+        fname = (front.get("name") or "").lower()
+        fpid = front.get("pid")
+        matched = [
+            w for w in wins
+            if (fpid and int(w.get("pid") or 0) == int(fpid))
+            or (fname and fname in (w.get("app") or "").lower())
+        ]
+        if not matched:
+            matched = list(wins)
     if not matched:
         raise RuntimeError(
             f"no on-screen window for app {app!r} "
