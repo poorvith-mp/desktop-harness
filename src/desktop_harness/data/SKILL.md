@@ -75,9 +75,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
-- **Watch:** `show_monitor()` / `follow(app)` / `stage_note("clicked Save")` / `hide_monitor()`  
-  Live picture of **whatever** is being controlled (Settings, Notes, Chrome…). Default off until `show_monitor()`.
-- **Web only:** `open_stage(url)` opens a **small dedicated Chrome** (not the user’s tabs, not fullscreen) + monitor. `close_stage()` closes that window only.
+- **Stage (web, off-to-the-side):** `open_stage(url)` / `close_stage()` — small dedicated Chrome + a live picture **only** for that window. Do **not** `show_monitor()` when the real app is already on screen.
 - Presence: ice ring on the real cursor + small bottom **Working** chip (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
@@ -86,38 +84,28 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   for the narrow set of actions where failure is silent (see below); not a
   routine step after every click
 
-## Live monitor (see the work without switching apps)
+## Live view — only when they cannot already see it
 
-The user stays in Grok Build. A small **Agent view** pop-up shows a live
-picture of the window you are driving — **any app**, not just a browser.
-It auto-opens on the first click/open/type. Still call `show_monitor()` at
-the start of a sequence so it appears immediately.
+If Notes / Settings / YT Music is **on screen**, do not open a second
+picture of it. The user is already watching. Presence (ice ring +
+**Working**) is enough.
+
+Use `open_stage(url)` **only** for a web task that should not take over
+the user’s Chrome or the whole display. That helper opens a small
+dedicated window *and* the live view of *that* window — then
+`close_stage()` when done.
 
 ```python
-show_monitor()
-open_app("Notes")           # monitor follows Notes
-stage_note("opened Notes")
+# everyday: just control the real app
+open_app("Notes")
 click_text("All iCloud")
-stage_note("clicked All iCloud")
-hide_monitor()              # when the sequence is done
+hide_agent_presence()
+
+# web, off to the side:
+open_stage("https://example.com")
+# …act only on stage_frame()…
+close_stage()
 ```
-
-Do **not** fullscreen the target over Grok just so they can “see.” Show the
-monitor instead.
-
-## Stage browser (only when the task is the web)
-
-Native app first (rule below). If it really needs a browser:
-
-```python
-open_stage("https://example.com")   # small Chrome named DH Stage + monitor
-# click/type only in that window (stage_frame() / window_id)
-stage_note("opened example.com")
-close_stage()                       # that window only — never quit Chrome
-```
-
-Never `open_app("Google Chrome")` fullscreen over Grok. Never hijack the
-user’s existing tabs.
 
 ## Prefer what's already open
 

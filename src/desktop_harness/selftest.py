@@ -113,8 +113,11 @@ def run_selftest() -> int:
         assert len(appleish) <= 2, appleish
 
     def _monitor_follow_textedit():
-        # Live picture of any app — not Chrome-only. TextEdit is already
-        # opened later; here we only require the panel + follow API.
+        # Monitor stays off unless explicitly opened (or open_stage).
+        H.hide_monitor()
+        p = H.mouse_pos()
+        H.click(p["x"], p["y"])  # everyday click must NOT pop a TV
+        assert not H._stage.monitor_active()
         H.show_monitor()
         assert H._stage.monitor_active()
         H.follow("Ghostty")

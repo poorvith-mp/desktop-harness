@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.5.2 |
+| **Status** | v0.5.3 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
@@ -36,10 +36,10 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 
 Agents already have shell. A thin CLI is the lowest-friction path for Grok Build today.
 
-**Agent view (v0.5):** `show_monitor()` pops a small live picture of whatever the
-agent is driving (Notes, Settings, Chrome…). Stay in Grok Build and still see
-the work. Web tasks use `open_stage(url)` — a dedicated small Chrome window,
-not your everyday tabs and not a fullscreen takeover.
+**Stage (v0.5):** for a *web* task that should not steal the screen,
+`open_stage(url)` opens a small dedicated Chrome plus a live picture of
+**that** window. Everyday control of an app already on screen does **not**
+pop a second copy of it.
 
 ---
 
