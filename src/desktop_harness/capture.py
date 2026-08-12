@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import Quartz
-from AppKit import NSBitmapImageRep, NSImage
+from AppKit import NSBitmapImageRep
 
 from . import windows as winmod
 

@@ -4,9 +4,15 @@ version = "0.4.3"
 description = "Agent hands for your Mac — AX-first desktop control CLI for Grok Build and coding agents"
 requires-python = ">=3.10"
 dependencies = [
-    "pyobjc-framework-Quartz",
-    "pyobjc-framework-Cocoa",
-    "pyobjc-framework-ApplicationServices",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-ApplicationServices>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
 ]
 
 [project.scripts]
@@ -21,3 +27,7 @@ packages = ["src/desktop_harness"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "SKILL.md" = "desktop_harness/data/SKILL.md"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

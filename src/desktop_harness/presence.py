@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
 
 _halo = None
 _banner = None
@@ -77,7 +76,7 @@ def _pump(n: int = 4, seconds: float = 0.01):
 
 
 def _style_panel(panel, boost: int = 0):
-    from AppKit import NSColor, NSPopUpMenuWindowLevel, NSFloatingWindowLevel
+    from AppKit import NSColor, NSPopUpMenuWindowLevel
     try:
         # Above Dock / most chrome
         panel.setLevel_(int(NSPopUpMenuWindowLevel) + 8 + boost)
@@ -127,8 +126,7 @@ class _HaloView:
                 return False
 
             def drawRect_(self, rect):
-                from AppKit import NSBezierPath, NSColor, NSRectFill, NSGradient
-                from Foundation import NSMakePoint
+                from AppKit import NSBezierPath, NSColor, NSRectFill
 
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())

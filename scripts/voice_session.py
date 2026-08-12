@@ -92,7 +92,7 @@ def main():
         return
 
     try:
-        import websockets
+        import websockets  # noqa: F401
     except ImportError:
         print("pip install websockets", file=sys.stderr)
         sys.exit(1)

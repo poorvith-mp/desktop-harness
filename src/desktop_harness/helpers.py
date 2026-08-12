@@ -20,8 +20,19 @@ from . import windows as _windows
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
-AGENT_WORKSPACE = Path(
-    os.environ.get("DH_AGENT_WORKSPACE", REPO_ROOT / "agent-workspace"))
+
+
+def _resolve_agent_workspace() -> Path:
+    env = os.environ.get("DH_AGENT_WORKSPACE")
+    if env:
+        return Path(env).expanduser()
+    source_ws = REPO_ROOT / "agent-workspace"
+    if source_ws.is_dir():
+        return source_ws
+    return Path.home() / ".desktop-harness" / "agent-workspace"
+
+
+AGENT_WORKSPACE = _resolve_agent_workspace()
 
 
 # --- re-exports ---
@@ -315,6 +326,24 @@ def run_plan(
                 entry["result"] = True
             elif op == "window_frame":
                 entry["result"] = window_frame(step.get("app", plan_app))
+            elif op == "menu_click":
+                p = step.get("path") or step.get("keys") or []
+                if isinstance(p, str):
+                    p = [p]
+                entry["result"] = menu_click(*p, app=step.get("app", plan_app))
+            elif op == "wait_for":
+                entry["result"] = wait_for(
+                    step.get("text"),
+                    role=step.get("role"),
+                    app=step.get("app", plan_app),
+                    timeout=float(step.get("timeout", 5.0)),
+                    interval=float(step.get("interval", 0.1)),
+                )
+            elif op == "clipboard_get":
+                entry["result"] = clipboard_get()
+            elif op == "clipboard_set":
+                clipboard_set(step.get("text", ""))
+                entry["result"] = True
             else:
                 raise ValueError(f"unknown plan op: {op!r}")
             entry["ok"] = True
@@ -641,6 +670,154 @@ def verify(note: str = "", app: str | int | None = None) -> dict[str, Any]:
     except Exception:
         pass
     return result
+
+
+def menu_click(*path: str, app: str | int | None = None) -> dict[str, Any]:
+    """Walk an app's menu bar via AX and trigger the target menu item.
+
+    Example:
+        menu_click("File", "Save", app="TextEdit")
+        menu_click("Edit", "Find", "Find...", app=None)
+    """
+    from . import safety as _safety
+    _safety.check_frontmost_allowed()
+    if app:
+        _safety.check_app_allowed(str(app))
+    _safety.audit("menu_click", {"path": path, "app": app})
+
+    if not path:
+        raise ValueError("menu_click requires at least one menu item path element")
+
+    app_el, pid = _ax.app_element(app)
+    menubar = _ax._copy(app_el, "AXMenuBar")
+    if menubar is None:
+        raise RuntimeError(f"no AXMenuBar found for app {app!r}")
+
+    current_parent = menubar
+    target_el = None
+
+    for idx, segment in enumerate(path):
+        target_name = segment.strip().lower()
+        kids = _ax._children(current_parent)
+        match = None
+
+        # Exact title/label/desc match
+        for kid in kids:
+            title = _ax._str_attr(kid, "AXTitle").strip()
+            desc = _ax._str_attr(kid, "AXDescription").strip()
+            label = title or desc
+            if label.lower() == target_name:
+                match = kid
+                break
+
+        # Fuzzy / prefix fallback
+        if not match:
+            for kid in kids:
+                title = _ax._str_attr(kid, "AXTitle").strip()
+                desc = _ax._str_attr(kid, "AXDescription").strip()
+                label = title or desc
+                if target_name in label.lower() or label.lower().startswith(target_name):
+                    match = kid
+                    break
+
+        if not match:
+            available = [_ax._str_attr(k, "AXTitle") or _ax._str_attr(k, "AXDescription") for k in kids]
+            available = [a for a in available if a]
+            raise RuntimeError(
+                f"could not find menu item {segment!r} at depth {idx} in path {path!r}. "
+                f"Available at this level: {available}"
+            )
+
+        if idx == len(path) - 1:
+            target_el = match
+            break
+        else:
+            submenus = [k for k in _ax._children(match) if _ax._str_attr(k, "AXRole") == "AXMenu"]
+            if submenus:
+                current_parent = submenus[0]
+            else:
+                _ax.press_element(match)
+                wait_stable(0.1)
+                submenus = [k for k in _ax._children(match) if _ax._str_attr(k, "AXRole") == "AXMenu"]
+                current_parent = submenus[0] if submenus else match
+
+    if target_el is None or not _ax.press_element(target_el):
+        raise RuntimeError(f"failed to press menu item {path!r}")
+
+    wait_stable()
+    return {"action": "menu_click", "path": list(path), "app": app, "ok": True}
+
+
+def wait_for(
+    text: str | None = None,
+    *,
+    role: str | None = None,
+    app: str | int | None = None,
+    timeout: float = 5.0,
+    interval: float = 0.1,
+) -> dict[str, Any]:
+    """Poll ax.find until a matching element appears or timeout elapses.
+
+    Replaces fixed wait() loops when waiting for UI state transitions.
+    """
+    deadline = time.time() + max(0.0, timeout)
+    last_err = None
+
+    while True:
+        try:
+            hits = _ax.find(text or "", app=app, role=role, max_results=5, include_el=False)
+            if hits:
+                return hits[0]
+        except Exception as e:
+            last_err = e
+
+        if time.time() >= deadline:
+            break
+        wait(interval)
+
+    err_msg = f" (last error: {last_err})" if last_err else ""
+    raise TimeoutError(
+        f"wait_for timed out after {timeout}s (text={text!r}, role={role!r}, app={app!r}){err_msg}"
+    )
+
+
+def clipboard_get() -> str:
+    """Read plain text from macOS system clipboard."""
+    import subprocess
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+        pb = NSPasteboard.generalPasteboard()
+        val = pb.stringForType_(NSPasteboardTypeString)
+        if val is not None:
+            return str(val)
+    except Exception:
+        pass
+    # Fallback to pbpaste subprocess
+    try:
+        res = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True)
+        return res.stdout
+    except Exception as e:
+        raise RuntimeError(f"clipboard_get failed: {e}") from e
+
+
+def clipboard_set(text: str) -> None:
+    """Copy plain text to macOS system clipboard."""
+    import subprocess
+    from . import safety as _safety
+    _safety.audit("clipboard_set", {"length": len(text)})
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        if pb.setString_forType_(str(text), NSPasteboardTypeString):
+            return
+    except Exception:
+        pass
+    # Fallback to pbcopy subprocess
+    try:
+        subprocess.run(["pbcopy"], input=str(text), text=True, check=True)
+    except Exception as e:
+        raise RuntimeError(f"clipboard_set failed: {e}") from e
 
 
 def _load_agent_helpers():
