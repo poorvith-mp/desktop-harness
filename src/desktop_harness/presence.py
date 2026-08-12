@@ -326,7 +326,7 @@ def _make_banner():
     pill.addSubview_(pip)
 
     label = NSTextField.alloc().initWithFrame_(NSMakeRect(34, 8, w - 50, h - 16))
-    label.setStringValue_("Hands off — agent")
+    label.setStringValue_("Working")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
@@ -334,7 +334,7 @@ def _make_banner():
     label.setAlignment_(NSCenterTextAlignment)
     try:
         label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.98, 0.98))
-        label.setFont_(NSFont.systemFontOfSize_weight_(14.0, 0.40))
+        label.setFont_(NSFont.systemFontOfSize_weight_(13.0, 0.35))
     except Exception:
         try:
             label.setTextColor_(NSColor.whiteColor())
@@ -355,7 +355,7 @@ def _banner_layout():
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
     pad = 22.0
-    w, h = 268.0, 44.0
+    w, h = 148.0, 36.0
     if screen is None:
         return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()

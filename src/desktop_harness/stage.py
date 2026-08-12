@@ -36,7 +36,7 @@ from . import windows as _windows
 
 STAGE_TITLE = "DH Stage"
 STAGE_W, STAGE_H = 960.0, 700.0
-MONITOR_W, MONITOR_H = 460.0, 300.0
+MONITOR_W, MONITOR_H = 480.0, 300.0
 _MIN_REFRESH = 0.18  # ~5 fps cap
 
 _stage: dict[str, Any] | None = None
@@ -44,6 +44,7 @@ _monitor: NSPanel | None = None
 _image_view: Any = None
 _caption: Any = None
 _title_field: Any = None
+_chrome_bar: Any = None
 _follow_app: str | None = None
 _follow_wid: int | None = None
 _note = ""
@@ -241,9 +242,9 @@ def _apply_caption() -> None:
     who = _follow_app or "desktop"
     line = _note or "watching"
     try:
-        _caption.setStringValue_(f"{who}  ·  {line}")
+        _caption.setStringValue_(line)
         if _title_field is not None:
-            _title_field.setStringValue_("Agent view")
+            _title_field.setStringValue_(who)
     except Exception:
         pass
 
@@ -261,7 +262,7 @@ def _monitor_layout() -> tuple[float, float, float, float]:
 
 def show_monitor() -> bool:
     """Click-through live picture of the followed window. Never becomes key."""
-    global _monitor, _image_view, _caption, _title_field
+    global _monitor, _image_view, _caption, _title_field, _chrome_bar
     _presence._ensure_app()
     if _monitor is not None:
         refresh_monitor(force=True)
@@ -307,7 +308,7 @@ def show_monitor() -> bool:
     title.setDrawsBackground_(False)
     title.setEditable_(False)
     title.setSelectable_(False)
-    title.setStringValue_("Agent view")
+    title.setStringValue_("Live")
     try:
         title.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.95, 0.95))
         title.setFont_(NSFont.systemFontOfSize_weight_(11.0, 0.4))
@@ -329,7 +330,13 @@ def show_monitor() -> bool:
 
     img = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, MONITOR_W, MONITOR_H))
     try:
-        img.setImageScaling_(1)  # NSImageScaleProportionallyUpOrDown
+        # AxesIndependently (1) stretches. Use proportionally-down so
+        # Notes/Settings text stays readable, letterboxed if needed.
+        img.setImageScaling_(3)  # NSImageScaleProportionallyUpOrDown — keep aspect
+    except Exception:
+        pass
+    try:
+        img.setImageAlignment_(5)  # NSImageAlignCenter
     except Exception:
         pass
 
@@ -341,6 +348,7 @@ def show_monitor() -> bool:
     _image_view = img
     _caption = cap
     _title_field = title
+    _chrome_bar = chrome
     _apply_caption()
     _presence._pump(n=4, seconds=0.02)
     refresh_monitor(force=True)
@@ -348,20 +356,83 @@ def show_monitor() -> bool:
 
 
 def hide_monitor() -> None:
-    global _monitor, _image_view, _caption, _title_field
+    global _monitor, _image_view, _caption, _title_field, _chrome_bar
     try:
         if _monitor is not None:
+            _monitor.setIgnoresMouseEvents_(True)
             _monitor.orderOut_(None)
+            try:
+                _monitor.setFrame_display_(NSMakeRect(-4000, -4000, 10, 10), False)
+            except Exception:
+                pass
+            _monitor.setReleasedWhenClosed_(True)
+            _monitor.close()
     except Exception:
         pass
+    try:
+        from AppKit import NSApp
+        app = NSApp()
+        if app is not None:
+            for win in list(app.windows() or []):
+                try:
+                    if win is _presence._halo or win is _presence._banner:
+                        continue
+                    win.orderOut_(None)
+                    try:
+                        win.setFrame_display_(NSMakeRect(-4000, -4000, 10, 10), False)
+                    except Exception:
+                        pass
+                    win.close()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    _presence._pump(n=6, seconds=0.03)
     _monitor = None
     _image_view = None
     _caption = None
     _title_field = None
+    _chrome_bar = None
 
 
 def monitor_active() -> bool:
     return _monitor is not None
+
+
+def _fit_monitor_to_image(nsimg) -> None:
+    """Resize the panel so the capture keeps its aspect ratio (no stretch)."""
+    global _image_view
+    if _monitor is None or nsimg is None:
+        return
+    try:
+        sz = nsimg.size()
+        iw, ih = float(sz.width), float(sz.height)
+    except Exception:
+        return
+    if iw < 8 or ih < 8:
+        return
+    bar = 28.0
+    max_w, max_h = 520.0, 340.0
+    scale = min(max_w / iw, max_h / ih, 1.0)
+    vw, vh = max(240.0, iw * scale), max(160.0, ih * scale)
+    x, y, _, _ = _monitor_layout()
+    # keep top-right anchored
+    vf = _visible_frame()
+    if vf is not None:
+        x = float(vf.origin.x) + float(vf.size.width) - vw - 16.0
+        y = float(vf.origin.y) + float(vf.size.height) - (vh + bar) - 16.0
+    try:
+        _monitor.setFrame_display_(NSMakeRect(x, y, vw, vh + bar), False)
+        if _image_view is not None:
+            _image_view.setFrame_(NSMakeRect(0, 0, vw, vh))
+        if _chrome_bar is not None:
+            _chrome_bar.setFrame_(NSMakeRect(0, vh, vw, bar))
+        if _title_field is not None:
+            _title_field.setFrame_(NSMakeRect(10, 6, 88, 16))
+        if _caption is not None:
+            _caption.setFrame_(NSMakeRect(100, 6, max(80.0, vw - 112), 16))
+    except Exception:
+        pass
 
 
 def _nsimage_from_window(window_id: int):
@@ -402,6 +473,7 @@ def refresh_monitor(*, force: bool = False) -> bool:
     if nsimg is None:
         return False
     try:
+        _fit_monitor_to_image(nsimg)
         _image_view.setImage_(nsimg)
         _monitor.orderFrontRegardless()
         _apply_caption()

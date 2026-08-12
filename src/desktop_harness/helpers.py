@@ -37,8 +37,15 @@ win_to_global = _windows.win_to_global
 def activate(*args, **kwargs):
     out = _windows.activate(*args, **kwargs)
     name = args[0] if args else kwargs.get("name_or_bundle")
-    if name is not None and not isinstance(name, int):
-        _watch(f"open {name}", app=str(name))
+    # Follow only if the live view is already up — do not pop it just
+    # because we focused Ghostty after a task.
+    try:
+        if _stage.monitor_active() and name is not None and not isinstance(name, int):
+            _stage.follow(str(name))
+            _stage.stage_note(f"open {name}")
+            _stage.refresh_monitor(force=True)
+    except Exception:
+        pass
     return out
 
 
@@ -247,7 +254,7 @@ def enable_agent_cursor(enabled: bool = True):
 
 
 def hide_agent_presence():
-    """Hide ring + banner when a control sequence is finished.
+    """Hide ring, banner, and live monitor when a control sequence is finished.
 
     Call this when you know you're done — it's still the fast, immediate
     path. If a script forgets (crash, early return, the chat turn just
@@ -257,6 +264,10 @@ def hide_agent_presence():
     try:
         from . import presence
         presence.hide()
+    except Exception:
+        pass
+    try:
+        _stage.hide_monitor()
     except Exception:
         pass
     _input.set_overlay(None)

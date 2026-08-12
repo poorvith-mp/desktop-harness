@@ -78,7 +78,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - **Watch:** `show_monitor()` / `follow(app)` / `stage_note("clicked Save")` / `hide_monitor()`  
   Live picture of **whatever** is being controlled (Settings, Notes, Chrome…). Default off until `show_monitor()`.
 - **Web only:** `open_stage(url)` opens a **small dedicated Chrome** (not the user’s tabs, not fullscreen) + monitor. `close_stage()` closes that window only.
-- Presence: ice ring on the real cursor + large bottom **Hands off — agent** island (`DH_PRESENCE=0` to disable);
+- Presence: ice ring on the real cursor + small bottom **Working** chip (`DH_PRESENCE=0` to disable);
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
   isn't permanent — call it anyway when you know you're done)
@@ -224,7 +224,7 @@ run demo → screencapture → read the PNG → fix → demo again
 
 See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
 
-Presence UI: ice ring while moving; brief **amber** pulse on click; large bottom **Hands off — agent** island (never a second arrow).
+Presence UI: ice ring while moving; brief **amber** pulse on click; small bottom **Working** chip (never a second arrow). Hide both presence and the live monitor when the task ends.
 
 **For any change to presence itself specifically:** a single still screenshot
 proves nothing — the overlay is a moving, stateful thing, and its worst

@@ -181,11 +181,9 @@ def serve() -> None:
                             presence.hide()
                     except Exception:
                         pass
-                    # Monitor stays up while a Stage window exists; otherwise
-                    # drop it so we don't leave a stale picture on screen.
                     try:
                         from . import stage as _stage
-                        if _stage.monitor_active() and _stage._find_stage_window() is None:
+                        if _stage.monitor_active():
                             _stage.hide_monitor()
                     except Exception:
                         pass
