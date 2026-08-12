@@ -397,6 +397,11 @@ def keep_alive(seconds: float) -> None:
                 _halo.orderFrontRegardless()
             if _banner is not None:
                 _banner.orderFrontRegardless()
+            try:
+                from . import stage as _stage
+                _stage.tick()
+            except Exception:
+                pass
             _pump(n=1, seconds=0.003)
         except Exception:
             pass

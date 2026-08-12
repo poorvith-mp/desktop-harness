@@ -112,6 +112,17 @@ def run_selftest() -> int:
         # zero preferred; allow a couple if menubar leaked somehow
         assert len(appleish) <= 2, appleish
 
+    def _monitor_follow_textedit():
+        # Live picture of any app — not Chrome-only. TextEdit is already
+        # opened later; here we only require the panel + follow API.
+        H.show_monitor()
+        assert H._stage.monitor_active()
+        H.follow("Ghostty")
+        H.stage_note("selftest")
+        H.refresh_monitor(force=True)
+        H.hide_monitor()
+        assert not H._stage.monitor_active()
+
     for name, fn in [
         ("list_apps", _apps),
         ("list_windows", _wins),
@@ -127,6 +138,7 @@ def run_selftest() -> int:
         ("run_plan wait", _run_plan_wait),
         ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),
+        ("monitor follow Ghostty", _monitor_follow_textedit),
     ]:
         check(name, fn)
 

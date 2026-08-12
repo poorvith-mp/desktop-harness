@@ -30,10 +30,20 @@ list_apps = _windows.list_apps
 list_windows = _windows.list_windows
 frontmost_app = _windows.frontmost_app
 find_app = _windows.find_app
-activate = _windows.activate
-open_app = _windows.open_app
 window_frame = _windows.window_frame
 win_to_global = _windows.win_to_global
+
+
+def activate(*args, **kwargs):
+    out = _windows.activate(*args, **kwargs)
+    name = args[0] if args else kwargs.get("name_or_bundle")
+    if name is not None and not isinstance(name, int):
+        _watch(f"open {name}", app=str(name))
+    return out
+
+
+def open_app(name: str):
+    return activate(name)
 
 ax_snapshot = _ax.ax_snapshot
 find = _ax.find
@@ -41,16 +51,44 @@ focused_element = _ax.focused_element
 
 screenshot = _capture.screenshot
 
+from . import stage as _stage
+
+open_stage = _stage.open_stage
+close_stage = _stage.close_stage
+stage_frame = _stage.stage_frame
+show_monitor = _stage.show_monitor
+hide_monitor = _stage.hide_monitor
+follow = _stage.follow
+stage_note = _stage.stage_note
+refresh_monitor = _stage.refresh_monitor
+
 # Mouse — real system pointer (you can watch it move)
 mouse_pos = _input.mouse_pos
 move_to = _input.move_to
 move_by = _input.move_by
 wiggle = _input.wiggle
+def _watch(note: str | None = None, app: str | int | None = None) -> None:
+    """Keep the live monitor pointed at what we just touched. Never raises."""
+    try:
+        if note:
+            _stage.stage_note(note)
+        if app is not None:
+            name = str(app) if not isinstance(app, int) else None
+            if name:
+                _stage.follow(name)
+        if _stage.monitor_active():
+            _stage.refresh_monitor(force=False)
+    except Exception:
+        pass
+
+
 def click(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
     _safety.audit("click", {"args": args[:2]})
-    return _input.click(*args, **kwargs)
+    out = _input.click(*args, **kwargs)
+    _watch("click")
+    return out
 
 
 def right_click(*args, **kwargs):
@@ -173,7 +211,9 @@ def type_text(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
     _safety.audit("type_text", {"n": len(args[0]) if args else 0})
-    return _input.type_text(*args, **kwargs)
+    out = _input.type_text(*args, **kwargs)
+    _watch("type")
+    return out
 
 
 def enable_agent_cursor(enabled: bool = True):
@@ -298,6 +338,21 @@ def run_plan(
         try:
             if op in ("open_app", "open"):
                 entry["result"] = open_app(step["name"])
+            elif op == "open_stage":
+                entry["result"] = open_stage(step.get("url"))
+            elif op == "close_stage":
+                entry["result"] = close_stage()
+            elif op == "show_monitor":
+                entry["result"] = show_monitor()
+            elif op == "hide_monitor":
+                hide_monitor()
+                entry["result"] = True
+            elif op == "stage_note":
+                entry["result"] = stage_note(step.get("text") or step.get("note") or "")
+            elif op == "follow":
+                entry["result"] = follow(
+                    step.get("app"), window_id=step.get("window_id")
+                )
             elif op == "click":
                 if "wx" in step or "wy" in step:
                     fr = _frame_for(step.get("app"))

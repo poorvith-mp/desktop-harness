@@ -67,7 +67,8 @@ Optional warm **daemon** for multi-step speed (token-authenticated local socket)
 2. **`ax_snapshot`** — full interactive dump for **debug only** (often far more tokens than a screenshot; cap `max_nodes`). **Menubar skipped by default** so node budget goes to windows; `include_menubar=True` when you need menus.  
 3. **`screenshot` + `window_frame`** — window-scoped when AX is empty or custom-drawn; map px → global via `win_to_global` / `click_in_window`  
 4. **`run_plan`** — multi-step actions in one process (efficiency without cutting ops)  
-5. Coordinates only when no AX action exists  
+5. **`show_monitor` / `follow`** — live picture of the window being driven (any app). Optional **`open_stage`** = dedicated small Chrome for web only.  
+6. Coordinates only when no AX action exists  
 
 Note: `AXPress` works on a **background** app without focus steal — the AX path already delivers the “background control” roadmap item for pressable controls.
 
@@ -108,6 +109,7 @@ Note: `AXPress` works on a **background** app without focus steal — the AX pat
 |---------|-------------|
 | **v0.1–0.3** | AX + mouse + daemon + safety + media helpers |
 | **v0.4** | selftest, install.sh, public docs, Grok-first positioning |
+| **v0.5** | Live **Agent view** monitor (any app) + optional Stage Chrome for web |
 | **later** | Background focus-free control, optional MCP, permission onboarding app |
 
 ---
