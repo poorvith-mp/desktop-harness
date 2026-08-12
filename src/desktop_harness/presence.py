@@ -592,18 +592,19 @@ class _FrameView:
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
                 b = self.bounds()
-                # Center of the 3pt stroke sits on the true window edge.
-                # Radius matches macOS window corners (~10pt on Sequoia).
-                stroke = 3.0
+                # Sequoia window chrome is ~14pt. Stroke is centered on
+                # the glass edge (panel padded by half the line width).
+                stroke = 2.5
                 half = stroke / 2.0
+                radius = 20.0
                 path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                     ((half, half), (b.size.width - stroke, b.size.height - stroke)),
-                    10.0,
-                    10.0,
+                    radius,
+                    radius,
                 )
                 path.setLineWidth_(stroke)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    _ICE[0], _ICE[1], _ICE[2], 0.96
+                    _ICE[0], _ICE[1], _ICE[2], 0.94
                 ).set()
                 path.stroke()
 
@@ -617,8 +618,12 @@ def ring_window(app: str | int | None = None, window_id: int | None = None) -> b
     Only while presence is active. No second picture of the window.
     """
     global _frame, _frame_target
-    if not enabled() or not _active:
+    if not enabled():
         return False
+    if not _active:
+        show()
+        if not _active:
+            return False
     try:
         from . import windows as _win
         if window_id is not None:
@@ -632,8 +637,8 @@ def ring_window(app: str | int | None = None, window_id: int | None = None) -> b
         else:
             fr = _win.window_frame(app)
         x, y, w, h = float(fr["x"]), float(fr["y"]), float(fr["w"]), float(fr["h"])
-        # Half-stroke pad so the 3pt line is centered on the window edge.
-        pad = 1.5
+        # Half-stroke pad so the line is centered on the window edge.
+        pad = 1.25
         x, y, w, h = x - pad, y - pad, w + 2 * pad, h + 2 * pad
         _frame_target = (x, y, w, h)
         cx, cy, cw, ch = _cg_rect_to_cocoa(x, y, w, h)
