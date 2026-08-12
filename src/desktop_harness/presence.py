@@ -586,25 +586,30 @@ class _FrameView:
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
                 b = self.bounds()
-                inset = 3.0
+                # Stroke sits in the pad around the window so real chrome
+                # never pokes through the ice line.
+                pad = 6.0
+                stroke = 3.0
+                r = 8.0
                 path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    ((inset, inset), (b.size.width - 2 * inset, b.size.height - 2 * inset)),
-                    10.0,
-                    10.0,
+                    ((pad, pad), (b.size.width - 2 * pad, b.size.height - 2 * pad)),
+                    r,
+                    r,
                 )
-                path.setLineWidth_(3.0)
+                path.setLineWidth_(stroke)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    _ICE[0], _ICE[1], _ICE[2], 0.92
+                    _ICE[0], _ICE[1], _ICE[2], 0.95
                 ).set()
                 path.stroke()
                 glow = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    ((1.0, 1.0), (b.size.width - 2.0, b.size.height - 2.0)),
-                    12.0,
-                    12.0,
+                    ((pad - 2.0, pad - 2.0),
+                     (b.size.width - 2 * (pad - 2.0), b.size.height - 2 * (pad - 2.0))),
+                    r + 2.0,
+                    r + 2.0,
                 )
-                glow.setLineWidth_(6.0)
+                glow.setLineWidth_(5.0)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    _ICE[0], _ICE[1], _ICE[2], 0.18
+                    _ICE[0], _ICE[1], _ICE[2], 0.16
                 ).set()
                 glow.stroke()
 
@@ -633,6 +638,9 @@ def ring_window(app: str | int | None = None, window_id: int | None = None) -> b
         else:
             fr = _win.window_frame(app)
         x, y, w, h = float(fr["x"]), float(fr["y"]), float(fr["w"]), float(fr["h"])
+        # Grow the panel so the stroke sits *outside* the window bounds.
+        pad = 6.0
+        x, y, w, h = x - pad, y - pad, w + 2 * pad, h + 2 * pad
         _frame_target = (x, y, w, h)
         cx, cy, cw, ch = _cg_rect_to_cocoa(x, y, w, h)
         _ensure_app()

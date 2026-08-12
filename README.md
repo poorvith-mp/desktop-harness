@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.5.4 |
+| **Status** | v0.5.5 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
