@@ -297,6 +297,11 @@ _MEDIA_KEYCODES = {
     "prev": 18,
     "fast": 19,
     "rewind": 20,
+    "volumeup": 0,
+    "volup": 0,
+    "volumedown": 1,
+    "voldown": 1,
+    "mute": 7,
 }
 
 

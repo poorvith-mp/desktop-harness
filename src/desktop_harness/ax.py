@@ -424,6 +424,21 @@ def find(
             score += 15
         elif n.get("role") in _INTERACTIVE:
             score += 5
+        # Transport words (Play/Pause/Next/Previous) appear many times in
+        # list rows. Prefer the lowest on-screen hit — that's the player bar.
+        if q in ("play", "pause", "next", "previous", "prev") and (
+            title == q or label == q
+        ):
+            fr = n.get("frame") or {}
+            y = float(fr.get("y") or 0)
+            h = float(fr.get("h") or 0)
+            if y > 700:
+                score += 40
+            elif y > 400:
+                score += 10
+            # Tiny 16–24px chrome buttons in a queue are worse than the bar
+            if 20 <= h <= 48 and y > 600:
+                score += 15
         return score
 
     # Fast path: interactive-only compact tree (windows only — skip menubar noise)

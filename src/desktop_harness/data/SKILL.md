@@ -30,7 +30,8 @@ Use it proactively for Mac GUI tasks — don't say you can't control the laptop.
 
 ```bash
 desktop-harness --doctor
-desktop-harness daemon status   # if stopped: desktop-harness daemon start &
+# daemon auto-starts on first script (DH_AUTO_DAEMON=0 to disable)
+desktop-harness daemon status
 ```
 
 ## Efficiency (mandatory)
@@ -68,8 +69,9 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
   (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
-- Media: `ensure_media_playing(app?)` — **look once, act once** (see below);  
-  `media_key("playpause"|"next"|"prev")` when AX has no Play (YT Music web app)
+- Media: `now_playing(app?)` (title + state, no click);  
+  `ensure_media_playing(app?)` — **look once, act once**;  
+  `media_key("playpause"|"next"|"prev"|"volumeup"|"volumedown"|"mute")`
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)

@@ -125,11 +125,48 @@ def hotkey(*args, **kwargs):
 
 
 def media_key(name: str = "playpause", **kwargs):
-    """System media key (playpause/next/prev). Fallback when AX has no Play."""
+    """System media key (playpause/next/prev/volumeup/volumedown/mute)."""
     from . import safety as _safety
-    _safety.check_frontmost_allowed()
+    # Volume/mute are not app-targeted; still audit. Transport keys need
+    # the frontmost gate so we don't poke a password manager.
+    if name.lower() not in ("volumeup", "volup", "volumedown", "voldown", "mute"):
+        _safety.check_frontmost_allowed()
     _safety.audit("media_key", {"name": name})
     return _input.media_key(name, **kwargs)
+
+
+def now_playing(app: str | int | None = None) -> dict[str, Any]:
+    """Cheap now-playing snapshot: window title + AX transport state.
+
+    Prefer an already-open player (YT Music, Music, Spotify). Does not click.
+    """
+    target = app
+    if target is None:
+        names = ("YT Music", "YouTube Music", "Music", "Spotify", "YouTube")
+        running = {a.get("name"): a for a in list_apps()}
+        for n in names:
+            if n in running:
+                target = n
+                break
+        if target is None:
+            front = frontmost_app()
+            target = (front or {}).get("name")
+    info: dict[str, Any] = {"app": target}
+    try:
+        fr = window_frame(target)
+        info["title"] = fr.get("title") or ""
+        info["window"] = {k: fr[k] for k in ("x", "y", "w", "h") if k in fr}
+    except Exception as e:
+        info["title_error"] = str(e)
+    try:
+        st = media_transport(target)
+        info["state"] = st.get("state")
+        info["pause"] = st.get("pause")
+        info["play"] = st.get("play")
+        info["labels"] = (st.get("labels") or [])[:12]
+    except Exception as e:
+        info["transport_error"] = str(e)
+    return info
 
 
 def type_text(*args, **kwargs):

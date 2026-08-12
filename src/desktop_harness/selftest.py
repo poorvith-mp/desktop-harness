@@ -100,6 +100,11 @@ def run_selftest() -> int:
         ], stop_on_error=True)
         assert len(out) == 2 and all(r.get("ok") for r in out)
 
+    def _now_playing_shape():
+        info = H.now_playing()
+        assert isinstance(info, dict)
+        assert "app" in info
+
     def _menubar_skipped_by_default():
         # frontmost labels should not be flooded with Apple menu items
         labs = H.labels(limit=40)
@@ -120,6 +125,7 @@ def run_selftest() -> int:
         ("frame_on_screen filter", _frame_filter),
         ("window_frame + win_to_global", _window_frame_map),
         ("run_plan wait", _run_plan_wait),
+        ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),
     ]:
         check(name, fn)
@@ -182,7 +188,9 @@ def run_selftest() -> int:
         assert d.is_running(), "daemon not running after --bg"
         resp = d.exec_via_daemon("print(1+1)")
         assert resp.get("ok") and "2" in (resp.get("stdout") or "")
-        d.client_request({"op": "quit"}, timeout=2)
+        # Leave the daemon UP — quitting it here is why everyday agent
+        # calls after selftest went cold/slow. Restart is the test;
+        # teardown that disables the product is not.
 
     check("daemon bg + exec", _daemon_roundtrip)
 

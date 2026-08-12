@@ -66,6 +66,10 @@ def _write_token() -> str:
 
 
 def is_running() -> bool:
+    # Inside the daemon process a ping would deadlock (single-threaded
+    # accept loop is busy running the current script).
+    if os.environ.get("DH_IN_DAEMON") == "1":
+        return True
     if not SOCKET_PATH.exists():
         return False
     try:
@@ -135,6 +139,7 @@ def serve() -> None:
             pass
 
     token = _write_token()
+    os.environ["DH_IN_DAEMON"] = "1"
 
     from .helpers import namespace
 

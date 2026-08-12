@@ -208,8 +208,37 @@ def _want_daemon() -> bool:
         return False
 
 
+def _auto_start_daemon() -> bool:
+    """Start the warm daemon if it's down.
+
+    Default ON: a stopped daemon is the #1 reason agents feel "stuck / slow"
+    (cold pyobjc import every call, plus selftest used to leave it stopped).
+    Opt out: DH_AUTO_DAEMON=0 or DH_NO_DAEMON=1.
+    """
+    if os.environ.get("DH_NO_DAEMON", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("DH_AUTO_DAEMON", "1").lower() in ("0", "false", "no"):
+        return False
+    from . import daemon as d
+    if d.is_running():
+        return True
+    log = Path.home() / "Library" / "Caches" / "desktop-harness" / "daemon.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "ab") as lf:
+        subprocess.Popen(
+            [sys.executable, "-m", "desktop_harness.run", "daemon", "serve"],
+            stdout=lf, stderr=lf, start_new_session=True,
+            env={**os.environ},
+        )
+    for _ in range(30):
+        time.sleep(0.08)
+        if d.is_running():
+            return True
+    return False
+
+
 def _run_source(source: str) -> None:
-    if _want_daemon():
+    if _want_daemon() or _auto_start_daemon():
         from . import daemon as d
         try:
             resp = d.exec_via_daemon(source)
