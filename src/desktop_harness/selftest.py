@@ -100,6 +100,30 @@ def run_selftest() -> int:
         ], stop_on_error=True)
         assert len(out) == 2 and all(r.get("ok") for r in out)
 
+    def _grab_frame_ram():
+        fr = H.grab_frame()
+        assert fr["w"] >= 50 and fr["h"] >= 50
+        assert isinstance(fr["data"], (bytes, bytearray))
+        assert len(fr["data"]) >= fr["w"] * 4
+        r, g, b = H.pixel(fr, 2, 2)
+        assert 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255
+        d = H.frame_digest(fr)
+        assert isinstance(d, int)
+
+    def _run_loop_dry():
+        n = {"i": 0}
+
+        def step(frame):
+            n["i"] += 1
+            assert frame["w"] >= 50
+            if n["i"] >= 3:
+                return {"stop": True}
+            return None
+
+        out = H.run_loop(step, hz=40, seconds=2.0, max_frames=8)
+        assert out["frames"] == 3
+        assert out["last"] and out["last"].get("stop")
+
     def _user_stop_gate():
         from . import presence as p
         p.clear_stop()
@@ -153,6 +177,8 @@ def run_selftest() -> int:
         ("frame_on_screen filter", _frame_filter),
         ("window_frame + win_to_global", _window_frame_map),
         ("run_plan wait", _run_plan_wait),
+        ("grab_frame ram", _grab_frame_ram),
+        ("run_loop dry", _run_loop_dry),
         ("user stop gate", _user_stop_gate),
         ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),

@@ -112,18 +112,28 @@ def window_frame(app: str | int | None = None) -> dict[str, Any]:
         info = find_app(app)
         pid = (info or {}).get("pid")
 
+    def _match(wins: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        q = (name or "").lower()
+        for w in wins:
+            owner = (w.get("app") or "").lower()
+            # Owner / pid only — never match because some *other* app's title
+            # mentions us (a Ghostty tab named "Notes" is not Notes.app).
+            if pid is not None and int(w.get("pid") or 0) == int(pid):
+                if float(w.get("w") or 0) >= 50 and float(w.get("h") or 0) >= 50:
+                    out.append(w)
+                continue
+            if q and (owner == q or q in owner):
+                if float(w.get("w") or 0) >= 50 and float(w.get("h") or 0) >= 50:
+                    out.append(w)
+        return out
+
     wins = list_windows(on_screen_only=True)
-    matched: list[dict[str, Any]] = []
-    q = (name or "").lower()
-    for w in wins:
-        owner = (w.get("app") or "").lower()
-        # Owner / pid only — never match because some *other* app's title
-        # mentions us (a Ghostty tab named "Notes" is not Notes.app).
-        if pid is not None and int(w.get("pid") or 0) == int(pid):
-            matched.append(w)
-            continue
-        if q and (owner == q or q in owner):
-            matched.append(w)
+    matched = _match(wins)
+    # Frontmost but on another Space / "off-screen" to CGWindowList —
+    # still a real window we can capture and drive after activate.
+    if not matched:
+        matched = _match(list_windows(on_screen_only=False))
     if not matched and app is None and wins:
         front = frontmost_app() or {}
         fname = (front.get("name") or "").lower()

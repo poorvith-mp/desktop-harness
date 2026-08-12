@@ -240,8 +240,17 @@ def _auto_start_daemon() -> bool:
 def _run_source(source: str) -> None:
     if _want_daemon() or _auto_start_daemon():
         from . import daemon as d
+        # Games / reflex loops outlive the default 60s socket timeout.
+        # A long in-daemon script is one request; don't cut it off at 60s
+        # while the loop is still legally driving the Mac.
+        timeout = 60.0
         try:
-            resp = d.exec_via_daemon(source)
+            timeout = float(os.environ.get("DH_EXEC_TIMEOUT", "180"))
+        except ValueError:
+            timeout = 180.0
+        timeout = max(15.0, min(timeout, 600.0))
+        try:
+            resp = d.exec_via_daemon(source, timeout=timeout)
         except Exception as e:
             # fall back to local if daemon flaky
             print(f"# daemon unavailable ({e}); running in-process", file=sys.stderr)

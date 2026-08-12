@@ -258,15 +258,72 @@ def _key_event(keycode: int, down: bool, flags: int = 0):
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
 
 
-def key(name: str, *, settle: float = 0.03):
-    """Press a named key (return, escape, tab, …)."""
-    _assert_running()
+_held_keys: set[str] = set()
+
+
+def _code_for(name: str) -> int:
     code = _KEYCODES.get(name.lower())
     if code is None:
         raise ValueError(f"unknown key: {name!r}")
-    _key_event(code, True)
-    _key_event(code, False)
+    return code
+
+
+def key(name: str, *, settle: float = 0.03):
+    """Press a named key (return, escape, tab, …)."""
+    _assert_running()
+    _key_event(_code_for(name), True)
+    _key_event(_code_for(name), False)
     time.sleep(settle)
+
+
+def key_down(name: str) -> str:
+    """Hold a key down. Pair with key_up / keys_hold. No settle sleep."""
+    _assert_running(pump=False)
+    n = name.lower()
+    if n not in _held_keys:
+        _key_event(_code_for(n), True)
+        _held_keys.add(n)
+    return n
+
+
+def key_up(name: str) -> str:
+    """Release a held key."""
+    n = name.lower()
+    if n in _held_keys:
+        try:
+            _key_event(_code_for(n), False)
+        except Exception:
+            pass
+        _held_keys.discard(n)
+    return n
+
+
+def keys_hold(names: list[str] | set[str] | tuple[str, ...] | None = None) -> list[str]:
+    """Make *exactly* these keys be down. Releases anything else we held.
+
+    This is the game path: hold W, release S, in one call, no tap-gap.
+    """
+    _assert_running(pump=False)
+    want = {str(n).lower() for n in (names or [])}
+    for n in list(_held_keys - want):
+        key_up(n)
+    for n in want - _held_keys:
+        key_down(n)
+    return sorted(_held_keys)
+
+
+def release_keys() -> None:
+    """Release every key this process is holding. Safe in finally/Stop."""
+    for n in list(_held_keys):
+        try:
+            _key_event(_code_for(n), False)
+        except Exception:
+            pass
+    _held_keys.clear()
+
+
+def held_keys() -> list[str]:
+    return sorted(_held_keys)
 
 
 def hotkey(*keys: str, settle: float = 0.05):

@@ -77,6 +77,9 @@ find = _ax.find
 focused_element = _ax.focused_element
 
 screenshot = _capture.screenshot
+grab_frame = _capture.grab_frame
+pixel = _capture.pixel
+frame_digest = _capture.frame_digest
 
 from . import stage as _stage
 
@@ -94,6 +97,17 @@ mouse_pos = _input.mouse_pos
 move_to = _input.move_to
 move_by = _input.move_by
 wiggle = _input.wiggle
+key_down = _input.key_down
+key_up = _input.key_up
+keys_hold = _input.keys_hold
+release_keys = _input.release_keys
+held_keys = _input.held_keys
+
+from . import reflex as _reflex
+
+run_loop = _reflex.run_loop
+
+
 def _watch(note: str | None = None, app: str | int | None = None) -> None:
     """Refresh the live view only if it is already open (Stage).
 
@@ -284,6 +298,10 @@ def hide_agent_presence():
     ending), the warm daemon also self-clears presence after a stretch of
     no harness activity (see daemon.py's idle loop / DH_PRESENCE_IDLE_HIDE)
     so a missed call doesn't leave the overlay on screen indefinitely."""
+    try:
+        _input.release_keys()
+    except Exception:
+        pass
     try:
         _presence.hide()
     except Exception:

@@ -18,6 +18,11 @@ PY
 
 Optional **daemon** keeps the program warm so the *second* action is much faster than restarting Python every time.
 
+Games and other frame-timed work cannot wait for another chat turn. Use
+`grab_frame` (RAM pixels) + `keys_hold` inside `run_loop` so see→act
+happens in one process at tens of frames a second. The model writes the
+policy once; the Mac flies it.
+
 ---
 
 ## Can it move the real mouse?
