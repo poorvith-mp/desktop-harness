@@ -586,32 +586,18 @@ class _FrameView:
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
                 b = self.bounds()
-                # Stroke sits in the pad around the window so real chrome
-                # never pokes through the ice line.
-                pad = 6.0
+                # Center of the 3pt stroke sits on the true window edge
+                # (panel is padded by 1.5pt on each side).
                 stroke = 3.0
-                r = 8.0
-                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    ((pad, pad), (b.size.width - 2 * pad, b.size.height - 2 * pad)),
-                    r,
-                    r,
+                half = stroke / 2.0
+                path = NSBezierPath.bezierPathWithRect_(
+                    ((half, half), (b.size.width - stroke, b.size.height - stroke))
                 )
                 path.setLineWidth_(stroke)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    _ICE[0], _ICE[1], _ICE[2], 0.95
+                    _ICE[0], _ICE[1], _ICE[2], 0.96
                 ).set()
                 path.stroke()
-                glow = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-                    ((pad - 2.0, pad - 2.0),
-                     (b.size.width - 2 * (pad - 2.0), b.size.height - 2 * (pad - 2.0))),
-                    r + 2.0,
-                    r + 2.0,
-                )
-                glow.setLineWidth_(5.0)
-                NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                    _ICE[0], _ICE[1], _ICE[2], 0.16
-                ).set()
-                glow.stroke()
 
         cls._cls = FrameView
         return cls._cls
@@ -638,8 +624,8 @@ def ring_window(app: str | int | None = None, window_id: int | None = None) -> b
         else:
             fr = _win.window_frame(app)
         x, y, w, h = float(fr["x"]), float(fr["y"]), float(fr["w"]), float(fr["h"])
-        # Grow the panel so the stroke sits *outside* the window bounds.
-        pad = 6.0
+        # Half-stroke pad so the 3pt line is centered on the window edge.
+        pad = 1.5
         x, y, w, h = x - pad, y - pad, w + 2 * pad, h + 2 * pad
         _frame_target = (x, y, w, h)
         cx, cy, cw, ch = _cg_rect_to_cocoa(x, y, w, h)
