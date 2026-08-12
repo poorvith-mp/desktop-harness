@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.5.8 |
+| **Status** | v0.5.9 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
@@ -157,12 +157,12 @@ Env knobs:
 |----------|--------|
 | `DH_NO_DAEMON=1` | Always in-process |
 | `DH_MOUSE_INSTANT=1` | Warp mouse with no animation |
-| `DH_PRESENCE=1` (default) | Ice ring + bottom **Hands off — agent** island while controlling |
+| `DH_PRESENCE=1` (default) | Ice ring + ice frame + **Working · Stop** chip while controlling |
 | `DH_PRESENCE=0` | Disable presence UI |
 | `DH_SAFE=1` (default) | Agent policy defaults |
 | `DH_ALLOW_SENSITIVE=1` | Allow sensitive app names / overrides |
 
-**Presence (default on):** **one** system cursor + ice halo while moving; brief **amber** halo on click; large bottom **Hands off — agent** island (above the Dock). No second fake arrow. Off: `DH_PRESENCE=0`.
+**Presence (default on):** **one** system cursor + ice halo while moving; brief **amber** halo on click; ice frame on the driven window; bottom **Working · Stop** chip (click to abort). No second fake arrow. Off: `DH_PRESENCE=0`.
 
 **Observe loop (optional):** for agents *building* visual things — demo → **many** screenshots → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md` / `scripts/observe-demo.sh`.
 
@@ -217,7 +217,8 @@ Architecture notes: [DESIGN.md](./DESIGN.md)
 | `mouse_pos` / `move_to` / `wiggle` / `click` / `drag` / `scroll` | Real pointer |
 | `type_text` / `hotkey` / `key` | Keyboard |
 | `screenshot` | Window/display capture |
-| `enable_agent_cursor` | Optional blue ring |
+| `enable_agent_cursor` | Ice halo + frame + Working · Stop chip |
+| `resume_control` | Allow control again after a Stop click |
 
 ---
 

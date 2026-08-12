@@ -41,8 +41,29 @@ def list_apps() -> list[dict[str, Any]]:
     return out
 
 
+# CGWindowList is the expensive part of window_frame / screenshot / ring.
+# A single agent step can call it several times in a few milliseconds
+# against a desktop that has not moved. 80ms never hides a real window
+# change (activate/settle waits are longer) but collapses the repeats.
+_WIN_CACHE_TTL = 0.08
+_win_cache: tuple[float, bool, list[dict[str, Any]]] | None = None
+
+
+def _invalidate_window_cache() -> None:
+    global _win_cache
+    _win_cache = None
+
+
 def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
     """On-screen windows with bounds (global screen points)."""
+    global _win_cache
+    now = time.monotonic()
+    if (
+        _win_cache is not None
+        and _win_cache[1] is on_screen_only
+        and (now - _win_cache[0]) < _WIN_CACHE_TTL
+    ):
+        return list(_win_cache[2])
     opts = Quartz.kCGWindowListOptionOnScreenOnly if on_screen_only else 0
     raw = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []
     out = []
@@ -65,7 +86,8 @@ def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
             "w": width,
             "h": height,
         })
-    return out
+    _win_cache = (time.monotonic(), on_screen_only, out)
+    return list(out)
 
 
 def window_frame(app: str | int | None = None) -> dict[str, Any]:
@@ -253,6 +275,7 @@ def activate(name_or_bundle: str, wait: float | None = None) -> dict[str, Any]:
     if app_info.get("active") and not cold:
         _safety.audit("activate_skip", {"name": name_or_bundle, "reason": "already_frontmost"})
         return app_info
+    _invalidate_window_cache()
     apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(
         app_info["bundle_id"]) if app_info["bundle_id"] else []
     if apps:

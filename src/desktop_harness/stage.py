@@ -110,6 +110,7 @@ def open_stage(url: str | None = None) -> dict[str, Any]:
     Does not hijack existing Chrome tabs. Does not fullscreen.
     """
     global _stage
+    _presence.assert_running()
     if not _chrome_available():
         raise RuntimeError(
             "Google Chrome is not installed. Stage browser needs Chrome; "

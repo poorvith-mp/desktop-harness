@@ -55,10 +55,13 @@ def screenshot(
     path = Path(path)
     wid = window_id
     if wid is None and app:
-        for w in winmod.list_windows():
-            if app.lower() in w["app"].lower() or app.lower() in (w["title"] or "").lower():
-                wid = w["id"]
-                break
+        # Owner/pid only — same rule as window_frame. Matching a Ghostty
+        # tab titled "Notes" used to capture the wrong window.
+        try:
+            fr = winmod.window_frame(app)
+            wid = fr.get("id")
+        except RuntimeError:
+            wid = None
         if wid is None:
             raise RuntimeError(f"no on-screen window for app={app!r}")
     if wid is not None:
@@ -85,9 +88,9 @@ def screenshot(
 
 def window_info(app: str | None = None) -> dict[str, Any] | None:
     if app:
-        for w in winmod.list_windows():
-            if app.lower() in w["app"].lower():
-                return w
-        return None
+        try:
+            return winmod.window_frame(app)
+        except RuntimeError:
+            return None
     wins = winmod.list_windows()
     return wins[0] if wins else None

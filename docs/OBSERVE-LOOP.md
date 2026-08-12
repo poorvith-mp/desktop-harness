@@ -54,7 +54,7 @@ Take many frames while moving so lag/desync shows up:
 - [ ] Halo locked to warp target (no “dragging a second cursor”)  
 - [ ] Move = ice ring; click = brief amber then ice  
 - [ ] Large glass island above the Dock (not under the notch)  
-- [ ] Hands-off meaning is obvious  
+- [ ] Chip reads **Working · Stop** and a click aborts control  
 - [ ] Multiple frames reviewed, not one still
 - [ ] **A click lands on a different app mid-sequence, and the demo keeps
       going for several more seconds afterward.** Confirm via frames taken

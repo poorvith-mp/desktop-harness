@@ -100,6 +100,20 @@ def run_selftest() -> int:
         ], stop_on_error=True)
         assert len(out) == 2 and all(r.get("ok") for r in out)
 
+    def _user_stop_gate():
+        from . import presence as p
+        p.clear_stop()
+        p.request_stop("selftest")
+        try:
+            H.click(10, 10, move=False, settle=0)
+            raise AssertionError("click should raise ControlStopped")
+        except p.ControlStopped:
+            pass
+        # reads still work while stopped
+        assert H.frontmost_app() is not None
+        H.resume_control()
+        assert not p.stopped()
+
     def _now_playing_shape():
         info = H.now_playing()
         assert isinstance(info, dict)
@@ -139,6 +153,7 @@ def run_selftest() -> int:
         ("frame_on_screen filter", _frame_filter),
         ("window_frame + win_to_global", _window_frame_map),
         ("run_plan wait", _run_plan_wait),
+        ("user stop gate", _user_stop_gate),
         ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),
         ("monitor follow Ghostty", _monitor_follow_textedit),

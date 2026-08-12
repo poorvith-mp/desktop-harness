@@ -16,7 +16,10 @@ from typing import Any
 from . import ax as _ax
 from . import capture as _capture
 from . import input as _input
+from . import presence as _presence
 from . import windows as _windows
+
+ControlStopped = _presence.ControlStopped
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
@@ -32,16 +35,27 @@ frontmost_app = _windows.frontmost_app
 find_app = _windows.find_app
 window_frame = _windows.window_frame
 win_to_global = _windows.win_to_global
+chip_frame = _presence.chip_frame
+
+
+def _gate() -> None:
+    """Abort if the user clicked Stop on the Working chip."""
+    _presence.assert_running()
+
+
+def resume_control() -> None:
+    """Allow control again after a Stop. Only after the user asked to continue."""
+    _presence.clear_stop()
 
 
 def activate(*args, **kwargs):
+    _gate()
     out = _windows.activate(*args, **kwargs)
     name = args[0] if args else kwargs.get("name_or_bundle")
     # Follow only if the live view is already up — do not pop it just
     # because we focused Ghostty after a task.
     try:
         if name is not None and not isinstance(name, int):
-            from . import presence as _presence
             if _presence.active() and str(name).lower() not in (
                 "ghostty", "terminal", "iterm2",
             ):
@@ -88,7 +102,6 @@ def _watch(note: str | None = None, app: str | int | None = None) -> None:
     """
     try:
         if app is not None and not isinstance(app, int):
-            from . import presence as _presence
             if _presence.active() and str(app).lower() not in (
                 "ghostty", "terminal", "iterm2",
             ):
@@ -239,22 +252,24 @@ def type_text(*args, **kwargs):
 
 
 def enable_agent_cursor(enabled: bool = True):
-    """Show / hide agent presence (synced ice halo + top Hands-off island).
+    """Show / hide agent presence (ice halo + Working · Stop chip).
 
     Design: ONE real system cursor + soft glow halo (never a second arrow).
-    Blue while moving; brief red flash on click. DH_PRESENCE=0 to disable.
+    Ice while moving; brief amber flash on click. DH_PRESENCE=0 to disable.
+    Click the bottom chip to stop the agent immediately.
     """
     try:
-        from . import presence
         if not enabled:
-            presence.hide()
+            _presence.hide()
             _input.set_overlay(None)
             return False
+        # Explicit new control session — user asked the agent to work again.
+        _presence.clear_stop()
         p = mouse_pos()
-        ok = presence.show(p["x"], p["y"])
+        ok = _presence.show(p["x"], p["y"])
         if ok:
             # Overlay uses presence.move(x,y) on every warp — same coords as cursor
-            _input.set_overlay(presence)
+            _input.set_overlay(_presence)
         return ok
     except Exception as e:
         print(f"agent presence unavailable: {e}")
@@ -270,8 +285,7 @@ def hide_agent_presence():
     no harness activity (see daemon.py's idle loop / DH_PRESENCE_IDLE_HIDE)
     so a missed call doesn't leave the overlay on screen indefinitely."""
     try:
-        from . import presence
-        presence.hide()
+        _presence.hide()
     except Exception:
         pass
     try:
@@ -289,14 +303,11 @@ def keep_alive(seconds: float) -> None:
 def wait(seconds: float = 0.4):
     """Pause — presence-safe: keeps the agent-presence overlay from
     sinking behind other windows during the wait, instead of a raw sleep
-    that leaves it unattended. Prefer this over time.sleep() in scripts."""
-    try:
-        from . import presence
-        presence.keep_alive(seconds)
-        return
-    except Exception:
-        pass
-    time.sleep(seconds)
+    that leaves it unattended. Prefer this over time.sleep() in scripts.
+
+    Honors a Stop click on the Working chip (raises ControlStopped).
+    """
+    _presence.keep_alive(seconds)
 
 
 def wait_stable(seconds: float = 0.2):
@@ -358,6 +369,7 @@ def run_plan(
         return frame
 
     for i, raw in enumerate(steps):
+        _gate()
         step = dict(raw or {})
         op = (step.get("op") or step.get("action") or "").strip().lower()
         entry: dict[str, Any] = {"i": i, "op": op, "ok": False}
@@ -546,6 +558,7 @@ def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
     Never spam Space. Never multi-retry in one call.
     """
     from . import safety as _safety
+    _gate()
     nodes = ax_snapshot(app, max_nodes=400, interactive_only=True, include_el=True)
     status = _media_state_from_nodes(nodes)
     play_el = status.pop("_play_el", None)
@@ -616,6 +629,7 @@ def click_text(
     Prefer role=\"AXButton\" for toolbar/player controls.
     """
     from . import safety as _safety
+    _gate()
     _safety.check_frontmost_allowed()
     if app:
         _safety.check_app_allowed(str(app))
@@ -669,6 +683,7 @@ def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, 
     # into a focused field with no check and no audit row, while the slower
     # click+type fallback underneath it was gated — so the fast path was the
     # unguarded one.
+    _gate()
     _safety.check_frontmost_allowed()
     if app:
         _safety.check_app_allowed(str(app))

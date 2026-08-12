@@ -46,6 +46,18 @@ def set_overlay(overlay) -> None:
     _overlay = overlay
 
 
+def _assert_running(*, pump: bool = True) -> None:
+    """Honor a Stop click on the Working chip before mutating the Mac."""
+    try:
+        from . import presence
+        presence.assert_running(pump=pump)
+    except Exception as e:
+        from .presence import ControlStopped
+        if isinstance(e, ControlStopped):
+            raise
+        # Presence unavailable — still allow control.
+
+
 def _presence_move(x: float, y: float):
     global _overlay
     if _overlay is not None:
@@ -109,6 +121,7 @@ def move_to(
     Set DH_MOUSE_INSTANT=1 to warp with zero animation.
     """
     import os
+    _assert_running()
     if os.environ.get("DH_MOUSE_INSTANT", "").lower() in ("1", "true", "yes"):
         duration = 0
     start = mouse_pos()
@@ -135,6 +148,7 @@ def move_to(
         _warp(xi, yi)
         _post_mouse(Quartz.kCGEventMouseMoved, xi, yi)
         time.sleep(dt)
+        _assert_running()
     return {"x": float(x), "y": float(y)}
 
 
@@ -167,6 +181,7 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
 
     duration default is short (0.06s) for agent speed; pass higher for demos.
     """
+    _assert_running()
     if move:
         move_to(x, y, duration=duration)
     else:
@@ -184,6 +199,7 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
 
 
 def right_click(x: float, y: float, settle: float = 0.05, move: bool = True):
+    _assert_running()
     if move:
         move_to(x, y, duration=0.12)
     else:
@@ -205,6 +221,7 @@ def click_frame(frame: dict, *, double: bool = False):
 def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
          duration: float = 0.35):
     """Drag with visible pointer motion."""
+    _assert_running()
     move_to(x1, y1, duration=0.12)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x1, y1)
     dt = duration / max(steps, 1)
@@ -219,12 +236,14 @@ def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
             None, Quartz.kCGEventLeftMouseDragged, pt, Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
         time.sleep(dt)
+        _assert_running()
     _post_mouse(Quartz.kCGEventLeftMouseUp, x2, y2)
     time.sleep(0.03)
 
 
 def scroll(dx: int = 0, dy: int = 3, x: float | None = None, y: float | None = None):
     """Scroll wheel at optional location (moves pointer there first)."""
+    _assert_running()
     if x is not None and y is not None:
         move_to(x, y, duration=0.1)
     ev = Quartz.CGEventCreateScrollWheelEvent(
@@ -241,6 +260,7 @@ def _key_event(keycode: int, down: bool, flags: int = 0):
 
 def key(name: str, *, settle: float = 0.03):
     """Press a named key (return, escape, tab, …)."""
+    _assert_running()
     code = _KEYCODES.get(name.lower())
     if code is None:
         raise ValueError(f"unknown key: {name!r}")
@@ -251,6 +271,7 @@ def key(name: str, *, settle: float = 0.03):
 
 def hotkey(*keys: str, settle: float = 0.05):
     """Chord like hotkey('cmd', 's') or hotkey('cmd', 'shift', 't')."""
+    _assert_running()
     parts = [k.lower() for k in keys]
     flags = 0
     mods = []
@@ -312,6 +333,7 @@ def media_key(name: str = "playpause", *, settle: float = 0.05) -> str:
     (YT Music Safari Web App is the classic case). Prefer
     ``ensure_media_playing`` first for native AX players.
     """
+    _assert_running()
     code = _MEDIA_KEYCODES.get(name.lower().strip())
     if code is None:
         raise ValueError(
@@ -350,7 +372,8 @@ def media_key(name: str = "playpause", *, settle: float = 0.05) -> str:
 
 def type_text(text: str, *, delay: float = 0.008):
     """Type unicode via CGEvent keyboard with unicode string."""
-    for ch in text:
+    _assert_running()
+    for i, ch in enumerate(text):
         if ch == "\n":
             key("return")
             continue
@@ -366,3 +389,5 @@ def type_text(text: str, *, delay: float = 0.008):
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_up)
         if delay:
             time.sleep(delay)
+        if i % 8 == 7:
+            _assert_running()

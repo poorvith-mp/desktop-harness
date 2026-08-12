@@ -22,6 +22,12 @@ _active = False
 _last_cg: tuple[float, float] | None = None
 _mode = "blue"  # blue | red
 _frame_target: tuple[float, float, float, float] | None = None  # x,y,w,h CG
+_stopped = False
+_stop_source: str | None = None
+
+
+class ControlStopped(RuntimeError):
+    """User took the Mac back — Working chip was clicked."""
 
 # Grok ice — same family as the cursor halo
 _ICE = (0.45, 0.78, 1.00)
@@ -42,6 +48,61 @@ _FLASH = 62.0
 def enabled() -> bool:
     v = os.environ.get("DH_PRESENCE", "1").lower()
     return v not in ("0", "false", "no", "off")
+
+
+def stopped() -> bool:
+    """True after the user clicks Stop on the Working chip."""
+    return _stopped
+
+
+def clear_stop() -> None:
+    """Allow control again. Only call when the user asked to continue."""
+    global _stopped, _stop_source
+    _stopped = False
+    _stop_source = None
+
+
+def request_stop(source: str = "chip") -> None:
+    """Abort agent control. Safe to call from AppKit mouseDown."""
+    global _stopped, _stop_source
+    _stopped = True
+    _stop_source = source
+    try:
+        from . import safety as _safety
+        _safety.audit("user_stop", {"source": source})
+    except Exception:
+        pass
+    hide()
+    try:
+        from . import stage as _stage
+        _stage.hide_monitor()
+    except Exception:
+        pass
+    try:
+        from . import input as _input
+        _input.set_overlay(None)
+    except Exception:
+        pass
+
+
+def poll(*, deep: bool = False) -> None:
+    """Pump AppKit so a Stop click is delivered. No-op if nothing is up."""
+    if _app is None and not _active:
+        return
+    if deep:
+        _pump(n=6, seconds=0.014)
+    else:
+        _pump(n=2, seconds=0.004)
+
+
+def assert_running(*, pump: bool = True) -> None:
+    """Raise ControlStopped if the user clicked Stop."""
+    if pump:
+        poll(deep=False)
+    if _stopped:
+        raise ControlStopped(
+            "user stopped desktop-harness from the Working chip"
+        )
 
 
 def _ensure_app():
@@ -81,8 +142,8 @@ def _pump(n: int = 4, seconds: float = 0.01):
         pass
 
 
-def _style_panel(panel, boost: int = 0):
-    from AppKit import NSColor, NSPopUpMenuWindowLevel, NSFloatingWindowLevel
+def _style_panel(panel, boost: int = 0, click_through: bool = True):
+    from AppKit import NSColor, NSPopUpMenuWindowLevel
     try:
         # Above Dock / most chrome
         panel.setLevel_(int(NSPopUpMenuWindowLevel) + 8 + boost)
@@ -90,7 +151,7 @@ def _style_panel(panel, boost: int = 0):
         panel.setLevel_(100 + boost)
     panel.setOpaque_(False)
     panel.setBackgroundColor_(NSColor.clearColor())
-    panel.setIgnoresMouseEvents_(True)
+    panel.setIgnoresMouseEvents_(bool(click_through))
     panel.setHasShadow_(False)
     try:
         panel.setHidesOnDeactivate_(False)
@@ -100,6 +161,11 @@ def _style_panel(panel, boost: int = 0):
         panel.setCollectionBehavior_(1 << 0 | 1 << 7 | 1 << 3)
     except Exception:
         pass
+    if not click_through:
+        try:
+            panel.setAcceptsMouseMovedEvents_(False)
+        except Exception:
+            pass
 
 
 def _cg_to_center_origin(cg_x: float, cg_y: float, size: float) -> tuple[float, float]:
@@ -113,6 +179,34 @@ def _cg_to_center_origin(cg_x: float, cg_y: float, size: float) -> tuple[float, 
     cocoa_cx = float(mf.origin.x) + float(cg_x)
     cocoa_cy = float(mf.origin.y) + float(mf.size.height) - float(cg_y)
     return cocoa_cx - size / 2.0, cocoa_cy - size / 2.0
+
+
+class _StopChipView:
+    """Clickable Working chip — click anywhere on the pill to stop control."""
+    _cls = None
+
+    @classmethod
+    def view_class(cls):
+        if cls._cls is not None:
+            return cls._cls
+        from AppKit import NSView
+
+        class StopChipView(NSView):
+            def isFlipped(self):
+                return False
+
+            def acceptsFirstMouse_(self, event):
+                return True
+
+            def mouseDown_(self, event):
+                request_stop("chip")
+
+            def hitTest_(self, point):
+                # Whole chip is the hit target, including the bloom pad.
+                return self
+
+        cls._cls = StopChipView
+        return cls._cls
 
 
 class _HaloView:
@@ -258,15 +352,27 @@ def _make_banner():
 
     _ensure_app()
     px, py, pw, ph, w, h, pad = _banner_layout()
+    # Nonactivating so a Stop click does not steal focus from the driven app.
+    style = NSWindowStyleMaskBorderless
+    try:
+        from AppKit import NSNonactivatingPanelMask
+        style = int(NSWindowStyleMaskBorderless) | int(NSNonactivatingPanelMask)
+    except Exception:
+        pass
     panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, pw, ph),
-        NSWindowStyleMaskBorderless,
+        style,
         2,
         False,
     )
-    _style_panel(panel, boost=2)
+    _style_panel(panel, boost=2, click_through=False)
+    try:
+        panel.setBecomesKeyOnlyIfNeeded_(True)
+    except Exception:
+        pass
 
-    root = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+    Root = _StopChipView.view_class()
+    root = Root.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
     root.setWantsLayer_(True)
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
@@ -331,7 +437,7 @@ def _make_banner():
     pill.addSubview_(pip)
 
     label = NSTextField.alloc().initWithFrame_(NSMakeRect(34, 8, w - 50, h - 16))
-    label.setStringValue_("Working")
+    label.setStringValue_("Working · Stop")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
@@ -360,7 +466,7 @@ def _banner_layout():
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
     pad = 18.0
-    w, h = 148.0, 36.0
+    w, h = 168.0, 36.0
     if screen is None:
         return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
@@ -393,17 +499,37 @@ def keep_alive(seconds: float) -> None:
     time (AppKit hard-aborts on window calls from a non-main thread; no
     Python exception, nothing to catch). This is the safe version: same
     effect, zero threads.
+
+    A Stop click during the wait raises ControlStopped so the script
+    cannot continue driving the Mac.
     """
+    if _stopped:
+        raise ControlStopped(
+            "user stopped desktop-harness from the Working chip"
+        )
     if not _active:
         time.sleep(max(0.0, seconds))
+        if _stopped:
+            raise ControlStopped(
+                "user stopped desktop-harness from the Working chip"
+            )
         return
     remaining = max(0.0, seconds)
-    step = 0.12
+    step = 0.08
     while remaining > 0:
+        if _stopped:
+            raise ControlStopped(
+                "user stopped desktop-harness from the Working chip"
+            )
         chunk = min(step, remaining)
         time.sleep(chunk)
         remaining -= chunk
         try:
+            poll(deep=True)
+            if _stopped:
+                raise ControlStopped(
+                    "user stopped desktop-harness from the Working chip"
+                )
             if _halo is not None:
                 _halo.orderFrontRegardless()
             if _banner is not None:
@@ -415,13 +541,16 @@ def keep_alive(seconds: float) -> None:
                 _stage.tick()
             except Exception:
                 pass
-            _pump(n=1, seconds=0.003)
+        except ControlStopped:
+            raise
         except Exception:
             pass
 
 
 def show(x: float | None = None, y: float | None = None) -> bool:
     global _active, _mode
+    if _stopped:
+        return False
     if not enabled():
         return False
     try:
@@ -552,6 +681,32 @@ def active() -> bool:
     without reaching into the private `_active` global directly.
     """
     return _active
+
+
+def chip_frame() -> dict[str, float] | None:
+    """CG bounds of the Working · Stop chip, or None if it is hidden."""
+    if _banner is None:
+        return None
+    try:
+        from AppKit import NSScreen
+        f = _banner.frame()
+        main = NSScreen.mainScreen()
+        if main is None:
+            return None
+        mf = main.frame()
+        # Cocoa bottom-left → CG top-left
+        x = float(f.origin.x) - float(mf.origin.x)
+        y = float(mf.origin.y) + float(mf.size.height) - (
+            float(f.origin.y) + float(f.size.height)
+        )
+        return {
+            "x": x,
+            "y": y,
+            "w": float(f.size.width),
+            "h": float(f.size.height),
+        }
+    except Exception:
+        return None
 
 
 def pulse():

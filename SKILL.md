@@ -76,10 +76,14 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
 - **Stage (web, off-to-the-side):** `open_stage(url)` / `close_stage()` — small dedicated Chrome + a live picture **only** for that window. Do **not** `show_monitor()` when the real app is already on screen.
-- Presence (agentic only): ice ring on the cursor, ice **frame** around the window being driven, small **Working** chip. Off: `DH_PRESENCE=0`. No second picture of an on-screen app.
+- Presence (agentic only): ice ring on the cursor, ice **frame** around the window being driven, small **Working · Stop** chip. Off: `DH_PRESENCE=0`. No second picture of an on-screen app.
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
-  isn't permanent — call it anyway when you know you're done)
+  isn't permanent — call it anyway when you know you're done).
+  **The chip is a real Stop control.** A click hides presence and raises
+  `ControlStopped` so the script cannot keep driving the Mac. After a stop,
+  do not continue the task. On a later user request, call
+  `enable_agent_cursor(True)` or `resume_control()` first.
 - Meta: `wait`, `wait_stable`, `verify(note, app?)` — screenshot + AX check
   for the narrow set of actions where failure is silent (see below); not a
   routine step after every click
@@ -88,7 +92,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 
 If Notes / Settings / YT Music is **on screen**, do not open a second
 picture of it. The user is already watching. Presence (ice ring +
-**Working**) is enough.
+**Working · Stop**) is enough.
 
 Use `open_stage(url)` **only** for a web task that should not take over
 the user’s Chrome or the whole display. That helper opens a small
@@ -212,7 +216,7 @@ run demo → screencapture → read the PNG → fix → demo again
 
 See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
 
-Presence UI: ice ring while moving; brief **amber** pulse on click; small bottom **Working** chip (never a second arrow). Hide both presence and the live monitor when the task ends.
+Presence UI: ice ring while moving; brief **amber** pulse on click; small bottom **Working · Stop** chip (never a second arrow). Click the chip to abort control. Hide both presence and the live monitor when the task ends.
 
 **For any change to presence itself specifically:** a single still screenshot
 proves nothing — the overlay is a moving, stateful thing, and its worst
