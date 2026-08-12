@@ -356,17 +356,23 @@ def _make_banner():
 
 
 def _banner_layout():
-    """Bottom-center island, fully above the Dock — large enough to read at a glance."""
+    """Chip centered on the window being driven (not the whole display)."""
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
-    pad = 22.0
+    pad = 18.0
     w, h = 148.0, 36.0
     if screen is None:
         return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    margin = 18.0  # above Dock, inside visibleFrame
-    pill_x = vf.origin.x + (vf.size.width - w) / 2.0
-    pill_y = vf.origin.y + margin
+    # Prefer the ringed window; else visible-frame center.
+    if _frame_target is not None:
+        gx, gy, gw, gh = _frame_target
+        cx, cy, cw, ch = _cg_rect_to_cocoa(gx, gy, gw, gh)
+        pill_x = cx + (cw - w) / 2.0
+        pill_y = cy + 16.0  # just above the window's bottom edge
+    else:
+        pill_x = float(vf.origin.x) + (float(vf.size.width) - w) / 2.0
+        pill_y = float(vf.origin.y) + 18.0
     return (
         pill_x - pad,
         pill_y - pad,
@@ -586,12 +592,14 @@ class _FrameView:
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
                 b = self.bounds()
-                # Center of the 3pt stroke sits on the true window edge
-                # (panel is padded by 1.5pt on each side).
+                # Center of the 3pt stroke sits on the true window edge.
+                # Radius matches macOS window corners (~10pt on Sequoia).
                 stroke = 3.0
                 half = stroke / 2.0
-                path = NSBezierPath.bezierPathWithRect_(
-                    ((half, half), (b.size.width - stroke, b.size.height - stroke))
+                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    ((half, half), (b.size.width - stroke, b.size.height - stroke)),
+                    10.0,
+                    10.0,
                 )
                 path.setLineWidth_(stroke)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(
@@ -651,10 +659,24 @@ def ring_window(app: str | int | None = None, window_id: int | None = None) -> b
             except Exception:
                 pass
         _frame.orderFrontRegardless()
+        _place_banner()
         _pump(n=2, seconds=0.006)
         return True
     except Exception:
         return False
+
+
+def _place_banner() -> None:
+    """Re-center the Working chip on the ringed window."""
+    if _banner is None:
+        return
+    try:
+        px, py, pw, ph, _, _, _ = _banner_layout()
+        from AppKit import NSMakeRect
+        _banner.setFrame_display_(NSMakeRect(px, py, pw, ph), False)
+        _banner.orderFrontRegardless()
+    except Exception:
+        pass
 
 
 # --- wire input.py overlay API ---
