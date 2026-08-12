@@ -31,7 +31,7 @@ TOKEN_PATH = Path(os.environ.get(
     Path.home() / ".desktop-harness" / "daemon.token",
 ))
 
-# Presence (halo + "Agent controlling" pill) is shown by scripts run through
+# Presence (halo + "Hands off" island) is shown by scripts run through
 # this daemon and is only ever hidden by a script explicitly calling
 # hide_agent_presence(). The daemon outlives any single script — if the
 # calling agent's turn just ends (chat marks the task done, no more calls

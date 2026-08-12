@@ -177,7 +177,7 @@ def type_text(*args, **kwargs):
 
 
 def enable_agent_cursor(enabled: bool = True):
-    """Show / hide agent presence (synced halo + bottom neon bar).
+    """Show / hide agent presence (synced ice halo + top Hands-off island).
 
     Design: ONE real system cursor + soft glow halo (never a second arrow).
     Blue while moving; brief red flash on click. DH_PRESENCE=0 to disable.
@@ -213,6 +213,11 @@ def hide_agent_presence():
     except Exception:
         pass
     _input.set_overlay(None)
+
+
+def keep_alive(seconds: float) -> None:
+    """Presence-safe wait. Same as wait(); exported so scripts can call it by name."""
+    wait(seconds)
 
 
 def wait(seconds: float = 0.4):

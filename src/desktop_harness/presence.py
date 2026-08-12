@@ -3,8 +3,8 @@
 Design rules (from observe loop):
   - NEVER draw a second pointer shape (dual-cursor lag is unusable)
   - System cursor stays; we only draw a soft HALO locked to the warp target
-  - Move = cool blue glow; click = brief red flash, then blue again
-  - Bottom neon bar fully above Dock (window level + margin + pad math)
+  - Move = cool ice ring; click = brief amber flash, then ice again
+  - Compact glass island under the menu bar (not on the Dock / mini-player)
 
 DH_PRESENCE=0 disables everything.
 """
@@ -30,8 +30,8 @@ _mode = "blue"  # blue | red
 # calling into presence (which must be the main thread).
 
 # Halo canvas — circle centered on cursor tip
-_SIZE = 40.0
-_FLASH = 48.0
+_SIZE = 52.0
+_FLASH = 62.0
 
 
 def enabled() -> bool:
@@ -127,8 +127,7 @@ class _HaloView:
                 return False
 
             def drawRect_(self, rect):
-                from AppKit import NSBezierPath, NSColor, NSRectFill, NSGradient
-                from Foundation import NSMakePoint
+                from AppKit import NSBezierPath, NSColor, NSRectFill
 
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
@@ -136,31 +135,16 @@ class _HaloView:
                 b = self.bounds()
                 cx = b.size.width / 2.0
                 cy = b.size.height / 2.0
-                # Leave a clear hole in the center so the real cursor tip stays sharp
-                outer_r = min(b.size.width, b.size.height) / 2.0 - 1.0
-                inner_r = 5.0
+                # Clear hole so the real cursor tip stays sharp
+                outer_r = min(b.size.width, b.size.height) / 2.0 - 0.5
+                inner_r = 6.5
+                click = self.mode == "red"
 
-                if self.mode == "red":
-                    # Click: soft warm red ring
-                    rings = (
-                        (outer_r, 0.98, 0.30, 0.25, 0.22),
-                        (outer_r * 0.72, 0.98, 0.35, 0.28, 0.16),
-                        (outer_r * 0.48, 1.0, 0.45, 0.35, 0.10),
-                    )
-                else:
-                    # Move/idle: soft blue ring
-                    rings = (
-                        (outer_r, 0.30, 0.55, 1.0, 0.20),
-                        (outer_r * 0.72, 0.35, 0.60, 1.0, 0.14),
-                        (outer_r * 0.48, 0.45, 0.70, 1.0, 0.09),
-                    )
-
-                for r, rr, gg, bb, aa in rings:
+                def _ring(r, rr, gg, bb, aa):
                     path = NSBezierPath.bezierPath()
                     path.appendBezierPathWithOvalInRect_(
                         ((cx - r, cy - r), (2 * r, 2 * r))
                     )
-                    # punch hole
                     hole = NSBezierPath.bezierPath()
                     hole.appendBezierPathWithOvalInRect_(
                         ((cx - inner_r, cy - inner_r), (2 * inner_r, 2 * inner_r))
@@ -175,22 +159,38 @@ class _HaloView:
                     ).set()
                     path.fill()
 
-                # Thin bright rim (subtle neon edge)
-                rim = NSBezierPath.bezierPath()
-                rim.appendBezierPathWithOvalInRect_(
-                    ((cx - outer_r + 0.5, cy - outer_r + 0.5),
-                     (2 * (outer_r - 0.5), 2 * (outer_r - 0.5)))
-                )
-                rim.setLineWidth_(1.2)
-                if self.mode == "red":
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                        1.0, 0.40, 0.30, 0.55
-                    ).set()
+                if click:
+                    # Amber pulse — confirm the click, then settle
+                    _ring(outer_r, 1.00, 0.42, 0.16, 0.22)
+                    _ring(outer_r * 0.78, 1.00, 0.52, 0.22, 0.28)
+                    _ring(outer_r * 0.56, 1.00, 0.68, 0.34, 0.18)
+                    rim_rgb = (1.00, 0.78, 0.42, 0.95)
+                    hair_rgb = (1.00, 0.92, 0.76, 0.70)
                 else:
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                        0.45, 0.75, 1.0, 0.45
-                    ).set()
+                    # Ice ring — readable on light *and* dark, not a second pointer
+                    _ring(outer_r, 0.28, 0.58, 1.00, 0.18)
+                    _ring(outer_r * 0.80, 0.40, 0.72, 1.00, 0.26)
+                    _ring(outer_r * 0.58, 0.62, 0.84, 1.00, 0.16)
+                    rim_rgb = (0.82, 0.92, 1.00, 0.95)
+                    hair_rgb = (0.95, 0.98, 1.00, 0.55)
+
+                rim = NSBezierPath.bezierPath()
+                rim_r = outer_r * 0.86
+                rim.appendBezierPathWithOvalInRect_(
+                    ((cx - rim_r, cy - rim_r), (2 * rim_r, 2 * rim_r))
+                )
+                rim.setLineWidth_(1.15)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(*rim_rgb).set()
                 rim.stroke()
+
+                hair = NSBezierPath.bezierPath()
+                hair.appendBezierPathWithOvalInRect_(
+                    ((cx - inner_r - 1.2, cy - inner_r - 1.2),
+                     (2 * (inner_r + 1.2), 2 * (inner_r + 1.2)))
+                )
+                hair.setLineWidth_(0.8)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(*hair_rgb).set()
+                hair.stroke()
 
         cls._cls = HaloView
         return cls._cls
@@ -247,7 +247,7 @@ def _make_banner():
     global _banner
     from AppKit import (
         NSColor, NSMakeRect, NSPanel, NSTextField, NSFont, NSView,
-        NSWindowStyleMaskBorderless, NSCenterTextAlignment,
+        NSWindowStyleMaskBorderless, NSLeftTextAlignment,
     )
     from Quartz import CGColorCreateGenericRGB
 
@@ -266,80 +266,81 @@ def _make_banner():
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
 
-    # Neon wash under pill
-    halo = NSView.alloc().initWithFrame_(
-        NSMakeRect(pad - 5, pad - 5, w + 10, h + 10)
+    # Soft bloom — quieter than the old neon wash
+    bloom = NSView.alloc().initWithFrame_(
+        NSMakeRect(pad - 8, pad - 6, w + 16, h + 12)
     )
-    halo.setWantsLayer_(True)
-    if halo.layer() is not None:
-        halo.layer().setCornerRadius_((h + 10) / 2.0)
-        halo.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.18, 0.48, 1.0, 0.18)
+    bloom.setWantsLayer_(True)
+    if bloom.layer() is not None:
+        bloom.layer().setCornerRadius_((h + 12) / 2.0)
+        bloom.layer().setBackgroundColor_(
+            CGColorCreateGenericRGB(0.22, 0.42, 0.78, 0.14)
         )
         try:
-            halo.layer().setShadowOpacity_(1.0)
-            halo.layer().setShadowRadius_(18.0)
-            halo.layer().setShadowOffset_((0, 0))
-            halo.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.30, 0.60, 1.0, 1.0)
+            bloom.layer().setShadowOpacity_(0.9)
+            bloom.layer().setShadowRadius_(16.0)
+            bloom.layer().setShadowOffset_((0, 0))
+            bloom.layer().setShadowColor_(
+                CGColorCreateGenericRGB(0.35, 0.62, 1.0, 0.85)
             )
         except Exception:
             pass
-    root.addSubview_(halo)
+    root.addSubview_(bloom)
 
     pill = NSView.alloc().initWithFrame_(NSMakeRect(pad, pad, w, h))
     pill.setWantsLayer_(True)
     if pill.layer() is not None:
         pill.layer().setCornerRadius_(h / 2.0)
+        # Dark glass, not a solid black brick
         pill.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.05, 0.06, 0.09, 0.92)
+            CGColorCreateGenericRGB(0.07, 0.08, 0.10, 0.78)
         )
-        pill.layer().setBorderWidth_(1.6)
+        pill.layer().setBorderWidth_(0.8)
         pill.layer().setBorderColor_(
-            CGColorCreateGenericRGB(0.40, 0.75, 1.0, 0.98)
+            CGColorCreateGenericRGB(0.78, 0.88, 1.0, 0.38)
         )
         try:
-            pill.layer().setShadowOpacity_(1.0)
-            pill.layer().setShadowRadius_(14.0)
-            pill.layer().setShadowOffset_((0, 0))
+            pill.layer().setShadowOpacity_(0.7)
+            pill.layer().setShadowRadius_(10.0)
+            pill.layer().setShadowOffset_((0, -1))
             pill.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.35, 0.70, 1.0, 1.0)
+                CGColorCreateGenericRGB(0.0, 0.0, 0.0, 0.55)
             )
         except Exception:
             pass
 
-    pip = NSView.alloc().initWithFrame_(NSMakeRect(16, (h - 7) / 2.0, 7, 7))
+    pip = NSView.alloc().initWithFrame_(NSMakeRect(12, (h - 6) / 2.0, 6, 6))
     pip.setWantsLayer_(True)
     if pip.layer() is not None:
-        pip.layer().setCornerRadius_(3.5)
+        pip.layer().setCornerRadius_(3.0)
         pip.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.50, 0.80, 1.0, 1.0)
+            CGColorCreateGenericRGB(0.55, 0.82, 1.0, 1.0)
         )
         try:
             pip.layer().setShadowOpacity_(1.0)
-            pip.layer().setShadowRadius_(6.0)
+            pip.layer().setShadowRadius_(5.0)
             pip.layer().setShadowOffset_((0, 0))
             pip.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.4, 0.75, 1.0, 1.0)
+                CGColorCreateGenericRGB(0.45, 0.75, 1.0, 0.95)
             )
         except Exception:
             pass
     pill.addSubview_(pip)
 
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(30, 8, w - 46, h - 16))
-    label.setStringValue_("Agent controlling")
+    label = NSTextField.alloc().initWithFrame_(NSMakeRect(24, 6, w - 36, h - 12))
+    label.setStringValue_("Hands off")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
-    label.setAlignment_(NSCenterTextAlignment)
+    label.setAlignment_(NSLeftTextAlignment)
     try:
-        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.97, 0.95))
-        label.setFont_(NSFont.systemFontOfSize_weight_(12.5, 0.25))
+        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.96, 0.94))
+        label.setFont_(NSFont.systemFontOfSize_weight_(12.0, 0.35))
     except Exception:
         try:
             label.setTextColor_(NSColor.whiteColor())
-            label.setFont_(NSFont.systemFontOfSize_(12.5))
+            label.setFont_(NSFont.systemFontOfSize_(12.0))
         except Exception:
             pass
     pill.addSubview_(label)
@@ -352,16 +353,17 @@ def _make_banner():
 
 
 def _banner_layout():
+    """Top-center island, just under the menu bar — never on the Dock or mini-player."""
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
-    pad = 20.0
-    w, h = 252.0, 38.0
+    pad = 16.0
+    w, h = 118.0, 28.0
     if screen is None:
-        return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
+        return 400.0, 900.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    margin = pad + 64.0  # fully clear of Dock
+    margin = 10.0
     pill_x = vf.origin.x + (vf.size.width - w) / 2.0
-    pill_y = vf.origin.y + margin
+    pill_y = vf.origin.y + vf.size.height - h - margin
     return (
         pill_x - pad,
         pill_y - pad,

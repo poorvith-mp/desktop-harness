@@ -8,7 +8,7 @@ def run_demo() -> int:
     from . import helpers as H
 
     print("desktop-harness live demo")
-    print("Watch: soft blue ring + top pill 'Agent active — hands off'\n")
+    print("Watch: ice ring + top 'Hands off' island\n")
 
     print("1) frontmost:", H.frontmost_app())
     print("2) mouse at:", H.mouse_pos())
