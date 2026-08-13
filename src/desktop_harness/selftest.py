@@ -13,6 +13,13 @@ def run_selftest() -> int:
 
     print("desktop-harness selftest\n")
     fails = 0
+    # A leftover Stop from a previous script must not fail this run.
+    try:
+        H.resume_control()
+        H.hide_agent_presence()
+        H.release_keys()
+    except Exception:
+        pass
 
     def check(name: str, fn: Callable[[], None]):
         nonlocal fails
@@ -109,6 +116,15 @@ def run_selftest() -> int:
         assert 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255
         d = H.frame_digest(fr)
         assert isinstance(d, int)
+        # General color tools — no app knowledge.
+        c = H.count_color(fr, (r, g, b), tol=8, region=(0, 0, 40, 40), step=2)
+        assert c >= 1
+        hit = H.find_color(fr, (r, g, b), tol=8, region=(0, 0, 40, 40), step=2)
+        assert hit and "x" in hit and "y" in hit
+        assert H.color_near((r, g, b), (r, g, b), tol=0)
+        col = H.scan_column(fr, 4, rgb=(r, g, b), tol=40, y0=0, y1=20, step=2)
+        assert isinstance(col, list)
+        H.largest_run(col)  # None is fine on a noisy patch
 
     def _run_loop_dry():
         n = {"i": 0}
@@ -117,12 +133,17 @@ def run_selftest() -> int:
             n["i"] += 1
             assert frame["w"] >= 50
             if n["i"] >= 3:
-                return {"stop": True}
-            return None
+                return {"stop": True, "hold": []}
+            return {"hold": []}
 
         out = H.run_loop(step, hz=40, seconds=2.0, max_frames=8)
         assert out["frames"] == 3
         assert out["last"] and out["last"].get("stop")
+
+    def _apply_hold_shape():
+        H.release_keys()
+        H.apply({"hold": []})
+        assert H.held_keys() == []
 
     def _user_stop_gate():
         from . import presence as p
@@ -152,17 +173,18 @@ def run_selftest() -> int:
 
     def _monitor_follow_textedit():
         # Monitor stays off unless explicitly opened (or open_stage).
+        H.resume_control()
         H.hide_monitor()
         p = H.mouse_pos()
         H.click(p["x"], p["y"])  # everyday click must NOT pop a TV
-        assert not H._stage.monitor_active()
+        assert not H._stage.monitor_active(), "everyday click opened monitor"
         H.show_monitor()
-        assert H._stage.monitor_active()
+        assert H._stage.monitor_active(), "show_monitor did not open"
         H.follow("Ghostty")
         H.stage_note("selftest")
         H.refresh_monitor(force=True)
         H.hide_monitor()
-        assert not H._stage.monitor_active()
+        assert not H._stage.monitor_active(), "hide_monitor left monitor up"
 
     for name, fn in [
         ("list_apps", _apps),
@@ -179,6 +201,7 @@ def run_selftest() -> int:
         ("run_plan wait", _run_plan_wait),
         ("grab_frame ram", _grab_frame_ram),
         ("run_loop dry", _run_loop_dry),
+        ("apply hold empty", _apply_hold_shape),
         ("user stop gate", _user_stop_gate),
         ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),
@@ -190,6 +213,7 @@ def run_selftest() -> int:
 
     def _textedit():
         import subprocess
+        H.resume_control()
         # open + AppleScript activate is more reliable against agent hosts
         subprocess.run(["open", "-a", "TextEdit"], check=False)
         time.sleep(0.4)

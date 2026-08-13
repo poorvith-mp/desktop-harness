@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.6.0 |
+| **Status** | v0.6.1 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
@@ -219,9 +219,9 @@ Architecture notes: [DESIGN.md](./DESIGN.md)
 | `screenshot` | Window/display capture |
 | `enable_agent_cursor` | Ice halo + frame + Working · Stop chip |
 | `resume_control` | Allow control again after a Stop click |
-| `grab_frame` / `pixel` | RAM window capture (no PNG) |
-| `keys_hold` / `key_down` / `key_up` | Held keys for games |
-| `run_loop` | In-process see→act at N Hz |
+| `grab_frame` / `pixel` / `find_color` / `scan_column` | RAM pixels, any window |
+| `keys_hold` / `tap` | Hold keys; instant click |
+| `run_loop` | In-process see→act at N Hz (any task) |
 
 ---
 

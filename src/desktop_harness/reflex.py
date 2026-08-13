@@ -1,12 +1,19 @@
-"""In-process see→act loop for games and other frame-timed work.
+"""In-process see→act. Task-agnostic.
 
-The chat loop cannot fly a plane. A model turn is hundreds of milliseconds
-to several seconds; Vesper Cut wrecks in less than that. This module keeps
-the *decision* next to the pixels and the keys — one process, no PNG, no
-round-trip.
+A chat turn is hundreds of milliseconds to several seconds. Anything that
+must land on *this* frame (a game, a video cue, a scroll that has to hit
+now) cannot wait for another model call. This module keeps capture and
+input in one process and runs a policy the caller wrote.
 
-The model still chooses the policy (which pixels matter, which keys to
-hold). The loop only executes it at display rate.
+Nothing here knows what app it is looking at. The policy does.
+The harness only:
+
+  1. grabs a RAM frame
+  2. calls ``step(frame)``
+  3. applies the action dict that comes back
+  4. honors Stop and always releases keys
+
+Write the policy in the script. Do not put app logic in this package.
 """
 from __future__ import annotations
 
@@ -19,32 +26,54 @@ from . import presence as _presence
 from . import windows as _windows
 
 
-class ControlStopped(RuntimeError):
-    pass
+def apply(action: Any, *, frame: dict[str, Any] | None = None) -> Any:
+    """Apply one action dict. Unknown keys are ignored.
 
+    | key | meaning |
+    |-----|---------|
+    | ``hold`` | ``keys_hold(list)`` — these keys down, others up |
+    | ``key`` | tap a named key once |
+    | ``tap`` | instant click, global ``[x, y]`` |
+    | ``tap_win`` | instant click, window-local ``[x, y]`` (needs frame) |
+    | ``move`` | warp pointer, global ``[x, y]`` |
+    | ``scroll`` | ``[dx, dy]`` wheel ticks |
+    | ``stop`` | end the loop (applied by ``run_loop``) |
 
-def grab_frame(app: str | None = None, window_id: int | None = None) -> dict[str, Any]:
-    return _capture.grab_frame(app=app, window_id=window_id)
-
-
-def pixel(frame: dict[str, Any], x: int, y: int) -> tuple[int, int, int]:
-    return _capture.pixel(frame, x, y)
-
-
-def keys_hold(names=None):
-    return _input.keys_hold(names)
-
-
-def key_down(name: str) -> str:
-    return _input.key_down(name)
-
-
-def key_up(name: str) -> str:
-    return _input.key_up(name)
-
-
-def release_keys() -> None:
-    _input.release_keys()
+    Returning ``None`` / ``{}`` does nothing. Returning a list applies
+    each item in order.
+    """
+    if action is None:
+        return None
+    if isinstance(action, (list, tuple)):
+        for item in action:
+            apply(item, frame=frame)
+        return action
+    if not isinstance(action, dict):
+        return action
+    if "hold" in action:
+        names = action["hold"]
+        if names is None:
+            names = []
+        elif isinstance(names, str):
+            names = [names]
+        _input.keys_hold(names)
+    if "key" in action and action["key"]:
+        _input.key(str(action["key"]), settle=float(action.get("settle", 0.0)))
+    if "tap" in action and action["tap"] is not None:
+        x, y = action["tap"][0], action["tap"][1]
+        _input.tap(float(x), float(y), double=bool(action.get("double")))
+    if "tap_win" in action and action["tap_win"] is not None and frame is not None:
+        wx, wy = action["tap_win"][0], action["tap_win"][1]
+        gx = float(frame.get("x") or 0) + float(wx)
+        gy = float(frame.get("y") or 0) + float(wy)
+        _input.tap(gx, gy, double=bool(action.get("double")))
+    if "move" in action and action["move"] is not None:
+        x, y = action["move"][0], action["move"][1]
+        _input.move_to(float(x), float(y), duration=0)
+    if "scroll" in action and action["scroll"] is not None:
+        dx, dy = action["scroll"][0], action["scroll"][1]
+        _input.scroll(int(dx), int(dy))
+    return action
 
 
 def run_loop(
@@ -52,25 +81,23 @@ def run_loop(
     *,
     app: str | int | None = None,
     window_id: int | None = None,
-    hz: float = 36.0,
+    hz: float = 30.0,
     seconds: float = 12.0,
     max_frames: int | None = None,
+    apply_actions: bool = True,
     on_stop: str = "release",
 ) -> dict[str, Any]:
-    """Call ``step(frame)`` at ``hz`` until time/frames/Stop/step says stop.
+    """Call ``step(frame)`` at ``hz`` until time / frames / Stop / stop.
 
-    Do **not** call ``screenshot()`` or write files inside ``step`` — that
-    is the whole point. Disk PNG is 10–50× slower than ``grab_frame`` and
-    will miss the frame you meant to act on.
+    ``step`` receives a RAM frame from ``grab_frame``. Return an action
+    dict (see ``apply``) or ``{"stop": True}`` to end.
 
-    ``step`` receives a RAM frame from ``grab_frame``. Return values:
+    Do **not** call ``screenshot()`` or write files inside ``step``.
+    Disk PNG is 10–50× slower than ``grab_frame`` and will miss the
+    frame you meant to act on.
 
-    - ``None`` / ``{}`` / truthy without ``stop`` → keep going
-    - ``{"stop": True, ...}`` → end the loop (keys released)
-    - raise ``ControlStopped`` if the user clicked the Working chip
-
-    Presence is pumped so Stop still works. Keys this loop held are
-    always released in ``finally``.
+    Presence is polled so the Working · Stop chip still aborts.
+    Held keys are released in ``finally``.
     """
     from .presence import ControlStopped as _CS
 
@@ -108,20 +135,23 @@ def run_loop(
             except RuntimeError:
                 wid = None
                 _windows._invalidate_window_cache()
-                fr = _windows.window_frame(app_name)
-                wid = int(fr["id"])
-                frame = _capture.grab_frame(app=app_name, window_id=wid)
+                if app_name:
+                    fr = _windows.window_frame(app_name)
+                    wid = int(fr["id"])
+                    frame = _capture.grab_frame(app=app_name, window_id=wid)
+                else:
+                    frame = _capture.grab_frame()
             frame["i"] = frames
             frame["t"] = now - t0
             last = step(frame)
             frames += 1
+            if apply_actions:
+                apply(last, frame=frame)
             if isinstance(last, dict) and last.get("stop"):
                 break
             slept = time.monotonic() - now
             remain = period - slept
             if remain > 0.001:
-                # Don't spin AppKit every frame — that is slower than the
-                # game. Sleep, and let the 80ms poll above take Stop clicks.
                 time.sleep(remain)
     finally:
         if on_stop == "release":

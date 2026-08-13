@@ -74,11 +74,12 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   `media_key("playpause"|"next"|"prev"|"volumeup"|"volumedown"|"mute")`
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
-- Keys (games): **`key_down` / `key_up` / `keys_hold([...])` / `release_keys()`** — hold, don't tap
-- **Fast eyes:** `grab_frame(app?)` → RAM pixels (`w,h,bpr,data`); `pixel(frame,x,y)` → RGB. No PNG.
-- **Reflex loop (games / frame-timed work):** `run_loop(step, app=, hz=36, seconds=12)`  
-  The chat loop is too slow to fly a plane. Put see→decide→act **inside one process**.  
-  `step(frame)` holds keys; return `{"stop": True}` to end. Stop chip still aborts.
+- Hold / instant: **`keys_hold([...])`**, `key_down` / `key_up` / `release_keys`, **`tap(x,y)`** (no settle)
+- **Fast eyes (any window, no PNG):** `grab_frame(app?)` → RAM `{w,h,data,x,y}`; `pixel`;  
+  `find_color(frame, rgb, tol=, region=)` · `count_color` · `scan_column` / `scan_row` · `largest_run`
+- **When the next frame matters:** do **not** screenshot → chat → click.  
+  `run_loop(step, app=, hz=30, seconds=12)` — `step` returns an action dict  
+  (`hold`, `key`, `tap`, `tap_win`, `scroll`, `stop`). One process. Stop chip still aborts.
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
 - **Stage (web, off-to-the-side):** `open_stage(url)` / `close_stage()` — small dedicated Chrome + a live picture **only** for that window. Do **not** `show_monitor()` when the real app is already on screen.
 - Presence (agentic only): ice ring on the cursor, ice **frame** around the window being driven, small **Working · Stop** chip. Off: `DH_PRESENCE=0`. No second picture of an on-screen app.
@@ -200,9 +201,21 @@ run_plan([
 3. **One** daemon `run_plan` (or one long script) — not N CLI spawns  
 4. Do **not** dual-agent the same pointer — one Mac, one cursor  
 
-If the task is **frame-timed** (game, video cue, anything that wrecks if you wait
-a second): do **not** screenshot → chat → click. Use `grab_frame` + `keys_hold`
-inside `run_loop`. The model writes the policy once; the process flies it.
+If the next **frame** is the action (canvas, video, live playhead, anything
+that is gone if you wait a second): do **not** screenshot → chat → click.
+
+```python
+cream = (230, 220, 210)
+def step(frame):
+    hit = find_color(frame, cream, tol=30, region=(0.1, 0.2, 0.4, 0.6))
+    if not hit:
+        return {"hold": []}
+    return {"hold": ["w"] if hit["y"] > frame["h"] * 0.55 else ["s"]}
+run_loop(step, app="Google Chrome", hz=30, seconds=12)
+```
+
+The **rgb / keys / region** are the task. The harness only sees pixels and
+holds keys. Same primitives for a flyer, a timeline, a canvas, a player.
 
 Parallel *perception* (subagent labels clusters on a saved PNG) is fine.  
 Parallel *control* of one app is not.

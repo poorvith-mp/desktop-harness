@@ -175,6 +175,42 @@ def wiggle(amplitude: float = 12.0, cycles: int = 2, duration: float = 0.35):
     return origin
 
 
+def tap(x: float, y: float, *, double: bool = False) -> dict[str, float]:
+    """Instant click. No pointer animation, no settle sleep.
+
+    Use this inside a tight loop. Everyday ``click()`` still animates so
+    a human can watch a one-off action.
+    """
+    _assert_running(pump=False)
+    _warp(x, y)
+    _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    if double:
+        _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+        _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    return {"x": float(x), "y": float(y)}
+
+
+def mouse_down(x: float, y: float) -> dict[str, float]:
+    """Press and hold the left button at (x, y). Pair with mouse_up."""
+    _assert_running(pump=False)
+    _warp(x, y)
+    _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+    return {"x": float(x), "y": float(y)}
+
+
+def mouse_up(x: float | None = None, y: float | None = None) -> dict[str, float]:
+    """Release the left button. Defaults to the current pointer."""
+    if x is None or y is None:
+        p = mouse_pos()
+        x = p["x"] if x is None else x
+        y = p["y"] if y is None else y
+    _post_mouse(Quartz.kCGEventLeftMouseUp, float(x), float(y))
+    return {"x": float(x), "y": float(y)}
+
+
 def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
           move: bool = True, duration: float = 0.06):
     """Left click at global screen coordinates. Moves the real pointer first.
@@ -301,7 +337,8 @@ def key_up(name: str) -> str:
 def keys_hold(names: list[str] | set[str] | tuple[str, ...] | None = None) -> list[str]:
     """Make *exactly* these keys be down. Releases anything else we held.
 
-    This is the game path: hold W, release S, in one call, no tap-gap.
+    Hold W and release S in one call — no tap-gap. Same primitive for
+    a game, a video scrub, or any key that must stay down.
     """
     _assert_running(pump=False)
     want = {str(n).lower() for n in (names or [])}

@@ -80,6 +80,12 @@ screenshot = _capture.screenshot
 grab_frame = _capture.grab_frame
 pixel = _capture.pixel
 frame_digest = _capture.frame_digest
+color_near = _capture.color_near
+find_color = _capture.find_color
+count_color = _capture.count_color
+scan_column = _capture.scan_column
+scan_row = _capture.scan_row
+largest_run = _capture.largest_run
 
 from . import stage as _stage
 
@@ -102,10 +108,14 @@ key_up = _input.key_up
 keys_hold = _input.keys_hold
 release_keys = _input.release_keys
 held_keys = _input.held_keys
+tap = _input.tap
+mouse_down = _input.mouse_down
+mouse_up = _input.mouse_up
 
 from . import reflex as _reflex
 
 run_loop = _reflex.run_loop
+apply = _reflex.apply
 
 
 def _watch(note: str | None = None, app: str | int | None = None) -> None:
