@@ -235,28 +235,19 @@ Parallel *control* of one app is not.
 - Cap tree size — don’t dump full AX  
 - Hotkeys: use `minus`/`equal` or `-`/`=`; also `[` `]` `home` `end` `pageup` `pagedown`
 
-## Observe loop (optional — visual QA only)
+## After you build something visible (required)
 
-When **building or polishing something on-screen** (presence, a UI demo, layout):
+Everyday open/click/type does **not** need a vision loop (see Efficiency).
+When **you just built or changed** the thing on screen (a page, overlay,
+app UI, demo), you are not done until you have used it and looked:
 
-```
-run demo → screencapture → read the PNG → fix → demo again
-```
+1. Run it (Chrome for web: `open -a "Google Chrome" <url>`).
+2. Use it like a person (`labels` / `click_text` / `wait_for`).
+3. `screenshot(app=…)` or `screencapture` — **read the PNG**.
+4. Fix only real defects. Repeat at most twice more.
+5. `hide_agent_presence()`. Claim only what the last capture shows.
 
-See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
-
-Presence UI: ice ring while moving; brief **amber** pulse on click; small bottom **Working · Stop** chip (never a second arrow). Click the chip to abort control. Hide both presence and the live monitor when the task ends.
-
-**For any change to presence itself specifically:** a single still screenshot
-proves nothing — the overlay is a moving, stateful thing, and its worst
-failure mode is disappearing exactly when something else steals window
-focus (which is normal, constant behavior in real agent use, not an edge
-case). Before calling presence work done, you must demo a sequence that
-includes a click landing on a *different* app plus several seconds of pure
-idle afterward, and confirm via multiple frames that the halo/banner are
-still there after both. A demo that never lets focus leave your own
-process will pass even when the real thing is broken — this exact gap
-shipped a bug once already.
+Presence / motion extras: `docs/OBSERVE-LOOP.md`.
 
 ## Docs in repo
 

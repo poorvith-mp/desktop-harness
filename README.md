@@ -164,7 +164,7 @@ Env knobs:
 
 **Presence (default on):** **one** system cursor + ice halo while moving; brief **amber** halo on click; ice frame on the driven window; bottom **Working · Stop** chip (click to abort). No second fake arrow. Off: `DH_PRESENCE=0`.
 
-**Observe loop (optional):** for agents *building* visual things — demo → **many** screenshots → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md` / `scripts/observe-demo.sh`.
+**After a visual build:** run it, use it, screenshot, **read the PNG**, fix, at most 3 rounds. See `docs/OBSERVE-LOOP.md`. Not for everyday click/type.
 
 ---
 
