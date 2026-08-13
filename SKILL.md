@@ -69,6 +69,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
   (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
 - Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`  
+  **`menu_click("File", "Save", app=?)`** — exact menu titles only (no fuzzy)  
   `click_text` **refuses** a weak, huge, or neck-and-neck match instead of
   guessing (that was accidental clicks). Prefer `exact=True` for Play/Save/OK.  
   A click is also refused if the mouse moved without the harness — you have
@@ -95,6 +96,7 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   `ControlStopped` so the script cannot keep driving the Mac. After a stop,
   do not continue the task. On a later user request, call
   `enable_agent_cursor(True)` or `resume_control()` first.
+- Clipboard: `clipboard_get()` / `clipboard_set(text)` — plain text only  
 - Meta: `wait`, `wait_stable`, **`wait_for(text, app?, timeout=3)`** — poll AX
   until a control appears (dialogs/sheets). Not a screenshot loop.
   `verify(note, app?)` — screenshot + AX only when failure would be silent.

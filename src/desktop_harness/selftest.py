@@ -149,6 +149,27 @@ def run_selftest() -> int:
         except TimeoutError:
             pass
 
+    def _workspace_not_site_packages():
+        from . import helpers as HH
+        p = HH._resolve_agent_workspace()
+        assert "site-packages" not in str(p)
+
+    def _menu_click_missing():
+        try:
+            H.menu_click("___NoSuchMenu___", "Nope")
+            raise AssertionError("missing menu should raise")
+        except RuntimeError:
+            pass
+
+    def _clipboard_roundtrip():
+        prev = H.clipboard_get()
+        token = "dh-selftest-clip"
+        try:
+            H.clipboard_set(token)
+            assert H.clipboard_get() == token
+        finally:
+            H.clipboard_set(prev)
+
     def _run_loop_dry():
         n = {"i": 0}
 
@@ -251,6 +272,9 @@ def run_selftest() -> int:
         ("run_plan wait", _run_plan_wait),
         ("grab_frame ram", _grab_frame_ram),
         ("wait_for present/timeout", _wait_for_present),
+        ("agent workspace path", _workspace_not_site_packages),
+        ("menu_click missing", _menu_click_missing),
+        ("clipboard roundtrip", _clipboard_roundtrip),
         ("run_loop dry", _run_loop_dry),
         ("apply hold empty", _apply_hold_shape),
         ("refuse weak click", _refuse_weak_click),

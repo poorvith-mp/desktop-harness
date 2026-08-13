@@ -24,8 +24,25 @@ PointerTaken = _input.PointerTaken
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
-AGENT_WORKSPACE = Path(
-    os.environ.get("DH_AGENT_WORKSPACE", REPO_ROOT / "agent-workspace"))
+
+
+def _resolve_agent_workspace() -> Path:
+    """Where optional ``agent_helpers.py`` is loaded from.
+
+    Editable checkout: ``<repo>/agent-workspace``.
+    A wheel in site-packages has no repo next to it — don't invent a
+    path inside site-packages. Fall back to ``~/.desktop-harness/agent-workspace``.
+    """
+    env = os.environ.get("DH_AGENT_WORKSPACE")
+    if env:
+        return Path(env).expanduser()
+    source = REPO_ROOT / "agent-workspace"
+    if source.is_dir():
+        return source
+    return Path.home() / ".desktop-harness" / "agent-workspace"
+
+
+AGENT_WORKSPACE = _resolve_agent_workspace()
 
 
 # --- re-exports ---
@@ -380,6 +397,91 @@ def wait_for(
     )
 
 
+def menu_click(*path: str, app: str | int | None = None) -> dict[str, Any]:
+    """Press a menu item by exact titles: ``menu_click("File", "Save")``.
+
+    Walks the AX menu bar. Each segment must match a title/label exactly
+    (case-insensitive). No substring guessing — that clicks the wrong item.
+    """
+    from . import safety as _safety
+    _gate()
+    _safety.check_frontmost_allowed()
+    if app:
+        _safety.check_app_allowed(str(app))
+    parts = [str(p).strip() for p in path if str(p).strip()]
+    if not parts:
+        raise ValueError("menu_click needs at least one title, e.g. File, Save")
+    _safety.audit("menu_click", {"path": parts, "app": app})
+
+    root, _pid = _ax.app_element(app)
+    bar = _ax._copy(root, "AXMenuBar")
+    if bar is None:
+        raise RuntimeError(f"no menu bar for app {app!r}")
+
+    current = bar
+    target = None
+    for i, name in enumerate(parts):
+        q = name.lower()
+        kids = _ax._children(current)
+        match = None
+        for kid in kids:
+            title = _ax._str_attr(kid, "AXTitle")
+            desc = _ax._str_attr(kid, "AXDescription")
+            if title.lower() == q or desc.lower() == q:
+                match = kid
+                break
+        if match is None:
+            available = [
+                _ax._str_attr(k, "AXTitle") or _ax._str_attr(k, "AXDescription")
+                for k in kids
+            ]
+            available = [a for a in available if a][:20]
+            raise RuntimeError(
+                f"no exact menu match for {name!r} in {parts!r}. "
+                f"visible: {available}"
+            )
+        if i == len(parts) - 1:
+            target = match
+            break
+        menus = [
+            k for k in _ax._children(match)
+            if _ax._str_attr(k, "AXRole") == "AXMenu"
+        ]
+        if not menus:
+            _ax.press_element(match)
+            wait_stable(0.08)
+            menus = [
+                k for k in _ax._children(match)
+                if _ax._str_attr(k, "AXRole") == "AXMenu"
+            ]
+        current = menus[0] if menus else match
+
+    if target is None or not _ax.press_element(target):
+        raise RuntimeError(f"could not press menu {parts!r}")
+    wait_stable()
+    return {"ok": True, "path": parts, "app": app}
+
+
+def clipboard_get() -> str:
+    """Plain text from the Mac clipboard. Empty string if none."""
+    from AppKit import NSPasteboard, NSPasteboardTypeString
+    pb = NSPasteboard.generalPasteboard()
+    val = pb.stringForType_(NSPasteboardTypeString)
+    return str(val) if val else ""
+
+
+def clipboard_set(text: str) -> None:
+    """Put plain text on the Mac clipboard."""
+    from AppKit import NSPasteboard, NSPasteboardTypeString
+    from . import safety as _safety
+    _gate()
+    _safety.audit("clipboard_set", {"n": len(text)})
+    pb = NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    if not pb.setString_forType_(str(text), NSPasteboardTypeString):
+        raise RuntimeError("clipboard_set failed")
+
+
 def ensure_daemon() -> bool:
     """Return True if warm daemon is available (start is a separate CLI step)."""
     from . import daemon as d
@@ -515,6 +617,24 @@ def run_plan(
                 entry["result"] = True
             elif op == "window_frame":
                 entry["result"] = window_frame(step.get("app", plan_app))
+            elif op == "menu_click":
+                p = step.get("path") or step.get("items") or []
+                if isinstance(p, str):
+                    p = [p]
+                entry["result"] = menu_click(*p, app=step.get("app", plan_app))
+            elif op == "wait_for":
+                entry["result"] = wait_for(
+                    step.get("text") or step.get("name") or "",
+                    app=step.get("app", plan_app),
+                    role=step.get("role"),
+                    exact=bool(step.get("exact", False)),
+                    timeout=float(step.get("timeout", 3.0)),
+                )
+            elif op == "clipboard_get":
+                entry["result"] = clipboard_get()
+            elif op == "clipboard_set":
+                clipboard_set(step.get("text") or "")
+                entry["result"] = True
             else:
                 raise ValueError(f"unknown plan op: {op!r}")
             entry["ok"] = True
