@@ -202,8 +202,19 @@ class _StopChipView:
                 request_stop("chip")
 
             def hitTest_(self, point):
-                # Whole chip is the hit target, including the bloom pad.
-                return self
+                # Only the dark pill — the bloom/pad must not steal
+                # clicks meant for the app underneath.
+                pf = getattr(self, "pill_frame", None)
+                if not pf:
+                    return None
+                x, y, w, h = pf
+                try:
+                    px, py = float(point.x), float(point.y)
+                except Exception:
+                    return None
+                if x <= px <= x + w and y <= py <= y + h:
+                    return self
+                return None
 
         cls._cls = StopChipView
         return cls._cls
@@ -373,6 +384,7 @@ def _make_banner():
 
     Root = _StopChipView.view_class()
     root = Root.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+    root.pill_frame = (pad, pad, w, h)
     root.setWantsLayer_(True)
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
@@ -470,12 +482,21 @@ def _banner_layout():
     if screen is None:
         return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    # Prefer the ringed window; else visible-frame center.
+    # Prefer the ringed window; sit *outside* it so the pill never
+    # covers app pixels (that was a source of accidental clicks).
     if _frame_target is not None:
         gx, gy, gw, gh = _frame_target
         cx, cy, cw, ch = _cg_rect_to_cocoa(gx, gy, gw, gh)
         pill_x = cx + (cw - w) / 2.0
-        pill_y = cy + 16.0  # just above the window's bottom edge
+        gap = 10.0
+        below = cy - h - gap
+        vmin = float(vf.origin.y)
+        vmax = vmin + float(vf.size.height) - h
+        if below >= vmin:
+            pill_y = below
+        else:
+            above = cy + ch + gap
+            pill_y = above if above <= vmax else max(vmin, below)
     else:
         pill_x = float(vf.origin.x) + (float(vf.size.width) - w) / 2.0
         pill_y = float(vf.origin.y) + 18.0

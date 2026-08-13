@@ -68,7 +68,11 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Discovery: `list_apps`, `list_windows`, `frontmost_app`, `open_app`, **`window_frame(app?)`**
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
   (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
-- Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
+- Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`  
+  `click_text` **refuses** a weak, huge, or neck-and-neck match instead of
+  guessing (that was accidental clicks). Prefer `exact=True` for Play/Save/OK.  
+  A click is also refused if the mouse moved without the harness — you have
+  the pointer; it will not click over you.
 - Media: `now_playing(app?)` (title + state, no click);  
   `ensure_media_playing(app?)` — **look once, act once**;  
   `media_key("playpause"|"next"|"prev"|"volumeup"|"volumedown"|"mute")`

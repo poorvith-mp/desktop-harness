@@ -38,6 +38,12 @@ _KEYCODES = {
 # Optional agent presence overlay (ring + banner)
 _overlay = None
 _auto_presence = True  # wire presence module on first motion if enabled
+_last_warp: tuple[float, float] | None = None
+_HUMAN_MOVE_PX = 18.0
+
+
+class PointerTaken(RuntimeError):
+    """User moved the mouse — refuse to click over them."""
 
 
 def set_overlay(overlay) -> None:
@@ -102,10 +108,29 @@ def _post_mouse(event_type: int, x: float, y: float, button=Quartz.kCGMouseButto
 
 def _warp(x: float, y: float):
     """Move the visible system cursor (what the human sees)."""
+    global _last_warp
     Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(float(x), float(y)))
     # Associate next mouse event with warp so apps don't jump-correct
     Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+    _last_warp = (float(x), float(y))
     _presence_move(x, y)
+
+
+def human_is_driving() -> bool:
+    """True if the pointer moved without us warping it — user has the mouse."""
+    if _last_warp is None:
+        return False
+    p = mouse_pos()
+    return math.hypot(p["x"] - _last_warp[0], p["y"] - _last_warp[1]) > _HUMAN_MOVE_PX
+
+
+def _guard_click() -> None:
+    """Fail closed: never click on top of a human who just moved the mouse."""
+    if human_is_driving():
+        raise PointerTaken(
+            "refusing click: the pointer moved independently "
+            "(you are using the mouse)"
+        )
 
 
 def move_to(
@@ -182,8 +207,10 @@ def tap(x: float, y: float, *, double: bool = False) -> dict[str, float]:
     a human can watch a one-off action.
     """
     _assert_running(pump=False)
+    _guard_click()
     _warp(x, y)
     _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    _guard_click()
     _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
     _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
     if double:
@@ -195,6 +222,7 @@ def tap(x: float, y: float, *, double: bool = False) -> dict[str, float]:
 def mouse_down(x: float, y: float) -> dict[str, float]:
     """Press and hold the left button at (x, y). Pair with mouse_up."""
     _assert_running(pump=False)
+    _guard_click()
     _warp(x, y)
     _post_mouse(Quartz.kCGEventMouseMoved, x, y)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
@@ -218,12 +246,14 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
     duration default is short (0.06s) for agent speed; pass higher for demos.
     """
     _assert_running()
+    _guard_click()
     if move:
         move_to(x, y, duration=duration)
     else:
         _warp(x, y)
         _post_mouse(Quartz.kCGEventMouseMoved, x, y)
     time.sleep(0.02)
+    _guard_click()
     _presence_click(x, y)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
     _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
@@ -236,6 +266,7 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
 
 def right_click(x: float, y: float, settle: float = 0.05, move: bool = True):
     _assert_running()
+    _guard_click()
     if move:
         move_to(x, y, duration=0.12)
     else:
@@ -258,6 +289,7 @@ def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
          duration: float = 0.35):
     """Drag with visible pointer motion."""
     _assert_running()
+    _guard_click()
     move_to(x1, y1, duration=0.12)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x1, y1)
     dt = duration / max(steps, 1)

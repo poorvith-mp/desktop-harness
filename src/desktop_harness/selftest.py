@@ -168,6 +168,33 @@ def run_selftest() -> int:
         H.apply({"hold": []})
         assert H.held_keys() == []
 
+    def _refuse_weak_click():
+        from . import helpers as HH
+        weak = [{"score": 25, "label": "Playing from", "role": "AXGroup",
+                 "frame": {"x": 0, "y": 0, "w": 900, "h": 700}}]
+        try:
+            HH._pick_click_hit(weak, "Play")
+            raise AssertionError("weak match should refuse")
+        except RuntimeError as e:
+            assert "confident" in str(e) or "refusing" in str(e)
+        assert not HH._frame_is_click_target({
+            "role": "AXWebArea", "frame": {"x": 0, "y": 0, "w": 900, "h": 700},
+        })
+        assert HH._frame_is_click_target({
+            "role": "AXButton", "frame": {"x": 10, "y": 10, "w": 80, "h": 24},
+        })
+
+    def _refuse_human_pointer():
+        from . import input as I
+        p = H.mouse_pos()
+        I._last_warp = (p["x"] + 80, p["y"] + 80)
+        try:
+            H.click(p["x"], p["y"], move=False, settle=0)
+            raise AssertionError("click should refuse when user moved the mouse")
+        except I.PointerTaken:
+            pass
+        I._last_warp = (p["x"], p["y"])
+
     def _user_stop_gate():
         from . import presence as p
         p.clear_stop()
@@ -226,6 +253,8 @@ def run_selftest() -> int:
         ("wait_for present/timeout", _wait_for_present),
         ("run_loop dry", _run_loop_dry),
         ("apply hold empty", _apply_hold_shape),
+        ("refuse weak click", _refuse_weak_click),
+        ("refuse human pointer", _refuse_human_pointer),
         ("user stop gate", _user_stop_gate),
         ("now_playing shape", _now_playing_shape),
         ("menubar skipped by default", _menubar_skipped_by_default),

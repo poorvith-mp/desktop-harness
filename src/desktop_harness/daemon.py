@@ -244,7 +244,8 @@ def serve() -> None:
                     except Exception as e:
                         ok = False
                         from .presence import ControlStopped
-                        if isinstance(e, ControlStopped):
+                        from .input import PointerTaken
+                        if isinstance(e, (ControlStopped, PointerTaken)):
                             err_msg = f"stopped: {e}\n"
                         else:
                             err_msg = traceback.format_exc()

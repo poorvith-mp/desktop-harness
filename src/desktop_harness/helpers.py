@@ -20,6 +20,7 @@ from . import presence as _presence
 from . import windows as _windows
 
 ControlStopped = _presence.ControlStopped
+PointerTaken = _input.PointerTaken
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
@@ -713,15 +714,22 @@ def click_text(
         labels = [n.get("label") or n.get("title") or n.get("role") for n in sample[:25]]
         raise RuntimeError(
             f"no AX match for {text!r} (role={role!r}, exact={exact}). visible sample: {labels}")
-    hit = hits[0]
+    hit = _pick_click_hit(hits, text)
     el = hit.get("_el")
-    if prefer_ax_press and el is not None:
+    role_name = hit.get("role") or ""
+    if prefer_ax_press and el is not None and _ax_pressable(role_name):
         if _ax.press_element(el):
             wait_stable()
             return {k: v for k, v in hit.items() if not k.startswith("_")}
     frame = hit.get("frame")
     if not frame:
         raise RuntimeError(f"matched {text!r} but no frame and AXPress failed: {hit}")
+    if not _frame_is_click_target(hit):
+        raise RuntimeError(
+            f"refusing to click {text!r}: match is {role_name} "
+            f"{int(frame.get('w', 0))}×{int(frame.get('h', 0))} — "
+            f"too large / not a control. Name a button or pass exact=True."
+        )
     # ensure app frontmost for coordinate click
     if app is not None:
         try:
@@ -738,6 +746,72 @@ def click_text(
     click_frame(frame)
     wait_stable()
     return {k: v for k, v in hit.items() if not k.startswith("_")}
+
+
+_PRESSABLE = frozenset({
+    "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton",
+    "AXMenuButton", "AXMenuItem", "AXLink", "AXTab",
+    "AXDisclosureTriangle", "AXComboBox", "AXMenuBarItem",
+})
+_CONTAINERS = frozenset({
+    "AXWindow", "AXGroup", "AXScrollArea", "AXSplitGroup",
+    "AXList", "AXOutline", "AXTable", "AXLayoutArea",
+    "AXBrowser", "AXWebArea", "AXSheet", "AXDialog",
+})
+_MIN_CLICK_SCORE = 60
+
+
+def _ax_pressable(role: str) -> bool:
+    return role in _PRESSABLE
+
+
+def _frame_is_click_target(hit: dict[str, Any]) -> bool:
+    """True only if a coordinate click on this hit is a real control.
+
+    Clicking the center of a window / group / web area is the usual
+    accidental click. Buttons may be wide; containers may not.
+    """
+    role = hit.get("role") or ""
+    fr = hit.get("frame") or {}
+    w = float(fr.get("w") or 0)
+    h = float(fr.get("h") or 0)
+    if w <= 0 or h <= 0:
+        return False
+    if role in _PRESSABLE:
+        return True
+    if role in _CONTAINERS:
+        return False
+    # Labels / unknown: only if they look like a control, not a paragraph.
+    return w * h <= 24000 and w <= 420 and h <= 120
+
+
+def _pick_click_hit(hits: list[dict[str, Any]], text: str) -> dict[str, Any]:
+    """Fail closed: weak or neck-and-neck matches are not clicked."""
+    confident = [h for h in hits if float(h.get("score") or 0) >= _MIN_CLICK_SCORE]
+    pool = confident or hits
+    hit = pool[0]
+    if float(hit.get("score") or 0) < _MIN_CLICK_SCORE:
+        names = [
+            (h.get("label") or h.get("title") or h.get("role"), h.get("score"))
+            for h in hits[:4]
+        ]
+        raise RuntimeError(
+            f"refusing to click {text!r}: no confident match {names}. "
+            f"Be more specific or pass exact=True."
+        )
+    if len(pool) >= 2:
+        s0 = float(pool[0].get("score") or 0)
+        s1 = float(pool[1].get("score") or 0)
+        if s0 - s1 < 12:
+            a = pool[0].get("label") or pool[0].get("title")
+            b = pool[1].get("label") or pool[1].get("title")
+            if (a or "").strip().lower() != (b or "").strip().lower():
+                raise RuntimeError(
+                    f"refusing to click {text!r}: ambiguous "
+                    f"{a!r} ({s0:.0f}) vs {b!r} ({s1:.0f}). "
+                    f"Pass exact=True or a longer name."
+                )
+    return hit
 
 
 def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, Any]:
