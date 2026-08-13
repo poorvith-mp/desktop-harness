@@ -343,6 +343,42 @@ def wait_stable(seconds: float = 0.2):
     wait(seconds)
 
 
+def wait_for(
+    text: str,
+    app: str | int | None = None,
+    *,
+    role: str | None = None,
+    exact: bool = False,
+    timeout: float = 3.0,
+    interval: float = 0.12,
+) -> dict[str, Any]:
+    """Poll AX ``find`` until a match appears, or raise TimeoutError.
+
+    Use this instead of a blind ``wait(0.5)`` after a click that should
+    open a sheet, menu, or dialog. Same eyes as everyday control — no
+    screenshot loop.
+    """
+    deadline = time.monotonic() + max(0.05, float(timeout))
+    last: list[dict[str, Any]] = []
+    q = text.strip().lower()
+    while time.monotonic() < deadline:
+        _gate()
+        last = _ax.find(text, app=app, role=role, max_results=6, include_el=False)
+        if exact:
+            last = [
+                h for h in last
+                if (h.get("title") or "").strip().lower() == q
+                or (h.get("label") or "").strip().lower() == q
+            ]
+        if last:
+            return last[0]
+        wait(interval)
+    raise TimeoutError(
+        f"wait_for {text!r} timed out after {timeout}s "
+        f"(role={role!r}, exact={exact})"
+    )
+
+
 def ensure_daemon() -> bool:
     """Return True if warm daemon is available (start is a separate CLI step)."""
     from . import daemon as d

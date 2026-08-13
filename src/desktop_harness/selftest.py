@@ -125,6 +125,29 @@ def run_selftest() -> int:
         col = H.scan_column(fr, 4, rgb=(r, g, b), tol=40, y0=0, y1=20, step=2)
         assert isinstance(col, list)
         H.largest_run(col)  # None is fine on a noisy patch
+        # Region grab must be smaller than the full window.
+        crop = H.grab_frame(region=(0.25, 0.25, 0.3, 0.3))
+        assert crop["w"] < fr["w"] or crop["h"] < fr["h"]
+        assert crop["w"] >= 8 and crop["h"] >= 8
+
+    def _wait_for_present():
+        labs = H.labels(limit=8)
+        token = None
+        for line in labs:
+            # "AXButton: Close" → Close
+            if ": " in line:
+                token = line.split(": ", 1)[1].strip()
+                if token and len(token) > 1:
+                    break
+        if not token:
+            return
+        hit = H.wait_for(token, timeout=2.0)
+        assert hit
+        try:
+            H.wait_for("___no_such_ax_label___", timeout=0.25)
+            raise AssertionError("wait_for should time out")
+        except TimeoutError:
+            pass
 
     def _run_loop_dry():
         n = {"i": 0}
@@ -200,6 +223,7 @@ def run_selftest() -> int:
         ("window_frame + win_to_global", _window_frame_map),
         ("run_plan wait", _run_plan_wait),
         ("grab_frame ram", _grab_frame_ram),
+        ("wait_for present/timeout", _wait_for_present),
         ("run_loop dry", _run_loop_dry),
         ("apply hold empty", _apply_hold_shape),
         ("user stop gate", _user_stop_gate),

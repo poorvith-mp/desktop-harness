@@ -30,85 +30,144 @@ def _save_cgimage(image, path: Path) -> Path:
     return path
 
 
+def _window_meta(
+    app: str | None,
+    window_id: int | None,
+) -> dict[str, Any] | None:
+    """Resolve id + origin without walking every off-screen window."""
+    if window_id is not None:
+        wid = int(window_id)
+        for w in winmod.list_windows(on_screen_only=True):
+            if int(w.get("id") or 0) == wid:
+                return w
+        # Rare: caller has an id that CG currently lists as off-screen.
+        for w in winmod.list_windows(on_screen_only=False):
+            if int(w.get("id") or 0) == wid:
+                return w
+        return {"id": wid, "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}
+    if app is not None:
+        try:
+            return winmod.window_frame(app)
+        except RuntimeError:
+            return None
+    try:
+        return winmod.window_frame(None)
+    except RuntimeError:
+        return None
+
+
+def _region_rect(meta: dict[str, Any] | None, region) -> Any:
+    """Window-local ``(x, y, w, h)`` → CG screen rect, or CGRectNull."""
+    if not region or meta is None:
+        return Quartz.CGRectNull
+    ox = float(meta.get("x") or 0)
+    oy = float(meta.get("y") or 0)
+    ww = float(meta.get("w") or 0)
+    wh = float(meta.get("h") or 0)
+    x, y, rw, rh = (float(region[0]), float(region[1]),
+                     float(region[2]), float(region[3]))
+    if ww > 0 and wh > 0 and 0 <= x <= 1 and 0 <= y <= 1 and 0 < rw <= 1 and 0 < rh <= 1:
+        x, y, rw, rh = x * ww, y * wh, rw * ww, rh * wh
+    return Quartz.CGRectMake(ox + x, oy + y, max(1.0, rw), max(1.0, rh))
+
+
+def _cg_image(
+    *,
+    app: str | None,
+    window_id: int | None,
+    region=None,
+):
+    """One CG capture. Named-app misses do **not** fall back to the whole display."""
+    meta = _window_meta(app, window_id)
+    wid = int(meta["id"]) if meta and meta.get("id") else None
+    flags = (
+        Quartz.kCGWindowImageBoundsIgnoreFraming
+        | Quartz.kCGWindowImageNominalResolution
+    )
+    image = None
+    if wid is not None:
+        bounds = _region_rect(meta, region)
+        image = Quartz.CGWindowListCreateImage(
+            bounds,
+            Quartz.kCGWindowListOptionIncludingWindow,
+            wid,
+            flags,
+        )
+        if image is None and app:
+            winmod._invalidate_window_cache()
+            meta = _window_meta(app, None)
+            wid = int(meta["id"]) if meta and meta.get("id") else None
+            if wid is not None:
+                image = Quartz.CGWindowListCreateImage(
+                    _region_rect(meta, region),
+                    Quartz.kCGWindowListOptionIncludingWindow,
+                    wid,
+                    flags,
+                )
+        if image is None and app:
+            raise RuntimeError(f"could not capture window for app={app!r}")
+    if image is None:
+        # Untargeted only — full display. Never a silent fallback for a
+        # named app (that used to dump the whole desktop, including
+        # whatever sat next to the window we missed).
+        display = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+        image = Quartz.CGWindowListCreateImage(
+            display,
+            Quartz.kCGWindowListOptionOnScreenOnly,
+            Quartz.kCGNullWindowID,
+            Quartz.kCGWindowImageNominalResolution,
+        )
+        meta = {
+            "id": None,
+            "x": float(display.origin.x),
+            "y": float(display.origin.y),
+            "w": float(display.size.width),
+            "h": float(display.size.height),
+        }
+    if image is None:
+        raise RuntimeError("capture returned no image")
+    return image, meta
+
+
 def grab_frame(
     app: str | None = None,
     window_id: int | None = None,
+    region=None,
 ) -> dict[str, Any]:
-    """Capture a window into RAM — no PNG, no disk.
+    """Capture a window (or a ``region`` of it) into RAM — no PNG.
 
-    This is the fast eye when the next frame is the action.
-    ``screenshot()`` still exists when you need a file for a model to read.
+    ``region`` is window-local ``(x, y, w, h)``; values in ``0..1`` are
+    fractions. Cropped frames have ``(0, 0)`` at the crop; ``x``/``y``
+    are the crop's global origin.
 
-    Returns ``{w, h, bpr, data, window_id}`` where ``data`` is RGBA bytes
-    (4 bytes/pixel, ``bpr`` may include row padding).
+    Named-app capture never silently becomes a full-desktop shot.
     """
     from . import safety as _safety
     if app:
         _safety.check_app_allowed(app)
     else:
         _safety.check_frontmost_allowed()
-    wid = window_id
-    if wid is None and app:
-        try:
-            fr = winmod.window_frame(app)
-            wid = fr.get("id")
-        except RuntimeError:
-            wid = None
-        if wid is None:
-            raise RuntimeError(f"no on-screen window for app={app!r}")
-    image = None
-    for attempt in range(3):
-        if wid is not None:
-            image = Quartz.CGWindowListCreateImage(
-                Quartz.CGRectNull,
-                Quartz.kCGWindowListOptionIncludingWindow,
-                int(wid),
-                Quartz.kCGWindowImageBoundsIgnoreFraming
-                | Quartz.kCGWindowImageNominalResolution,
-            )
-        if image is None:
-            bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
-            image = Quartz.CGWindowListCreateImage(
-                bounds,
-                Quartz.kCGWindowListOptionOnScreenOnly,
-                Quartz.kCGNullWindowID,
-                Quartz.kCGWindowImageNominalResolution,
-            )
-            wid = None
-        if image is not None:
-            break
-        time.sleep(0.02)
-        if app:
-            try:
-                winmod._invalidate_window_cache()
-                fr = winmod.window_frame(app)
-                wid = fr.get("id")
-            except Exception:
-                pass
-    if image is None:
-        raise RuntimeError("grab_frame returned no image")
+    image, meta = _cg_image(app=app, window_id=window_id, region=region)
     w = int(Quartz.CGImageGetWidth(image))
     h = int(Quartz.CGImageGetHeight(image))
     bpr = int(Quartz.CGImageGetBytesPerRow(image))
     provider = Quartz.CGImageGetDataProvider(image)
     raw = Quartz.CGDataProviderCopyData(provider)
     data = bytes(raw)
-    ox = oy = 0.0
-    if wid is not None:
-        try:
-            for win in winmod.list_windows(on_screen_only=False):
-                if int(win.get("id") or 0) == int(wid):
-                    ox = float(win.get("x") or 0)
-                    oy = float(win.get("y") or 0)
-                    break
-        except Exception:
-            pass
+    ox = float(meta.get("x") or 0)
+    oy = float(meta.get("y") or 0)
+    if region:
+        # Shift origin to the crop so tap_win / win_to_global stay honest.
+        dummy = {"w": meta.get("w") or w, "h": meta.get("h") or h}
+        x0, y0, _, _ = _box({**dummy, "w": int(dummy["w"]), "h": int(dummy["h"])}, region)
+        ox += x0
+        oy += y0
     return {
         "w": w,
         "h": h,
         "bpr": bpr,
         "data": data,
-        "window_id": int(wid) if wid is not None else None,
+        "window_id": int(meta["id"]) if meta.get("id") is not None else None,
         "x": ox,
         "y": oy,
     }
@@ -389,31 +448,13 @@ def screenshot(
         # same script) used to clobber a single shared capture.png.
         path = TMP / f"capture-{os.getpid()}-{time.time_ns()}.png"
     path = Path(path)
-    # Reuse the RAM grab (retries + owner/pid). Then encode PNG once.
-    frame = grab_frame(app=app, window_id=window_id)
-    wid = frame.get("window_id")
-    # Rebuild a CGImage from the already-captured bytes only if we still
-    # have the live window; cheaper path: recapture is already done —
-    # write via NSBitmapImageRep from a fresh CG grab of the same id.
-    image = None
-    if wid is not None:
-        image = Quartz.CGWindowListCreateImage(
-            Quartz.CGRectNull,
-            Quartz.kCGWindowListOptionIncludingWindow,
-            int(wid),
-            Quartz.kCGWindowImageBoundsIgnoreFraming
-            | Quartz.kCGWindowImageNominalResolution,
-        )
-    if image is None:
-        bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
-        image = Quartz.CGWindowListCreateImage(
-            bounds,
-            Quartz.kCGWindowListOptionOnScreenOnly,
-            Quartz.kCGNullWindowID,
-            Quartz.kCGWindowImageNominalResolution,
-        )
+    image, meta = _cg_image(app=app, window_id=window_id)
     _save_cgimage(image, path)
-    _safety.audit("screenshot", {"app": app, "window_id": wid, "path": str(path)})
+    _safety.audit("screenshot", {
+        "app": app,
+        "window_id": meta.get("id"),
+        "path": str(path),
+    })
     return str(path)
 
 

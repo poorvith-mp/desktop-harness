@@ -454,8 +454,11 @@ def find(
             if s >= 100 and len(hits) >= 1:
                 # exact title/label — good enough, skip deep rescan
                 break
-    # Slow path only if nothing useful — include menubar so File/Edit items still work
-    if not hits or hits[0][0] < 60:
+    # Slow path only if nothing useful. Use the *best* score, not the
+    # first node in tree order — a weak desc-match listed before an
+    # exact button used to force a full menubar walk every time.
+    best = max((s for s, _ in hits), default=0)
+    if best < 60:
         nodes = ax_snapshot(
             app, max_nodes=450, max_depth=12, interactive_only=False,
             include_el=True, include_menubar=True,

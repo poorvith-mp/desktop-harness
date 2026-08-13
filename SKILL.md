@@ -75,8 +75,9 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
 - Hold / instant: **`keys_hold([...])`**, `key_down` / `key_up` / `release_keys`, **`tap(x,y)`** (no settle)
-- **Fast eyes (any window, no PNG):** `grab_frame(app?)` → RAM `{w,h,data,x,y}`; `pixel`;  
-  `find_color(frame, rgb, tol=, region=)` · `count_color` · `scan_column` / `scan_row` · `largest_run`
+- **Fast eyes (any window, no PNG):** `grab_frame(app?, region?)` → RAM `{w,h,data,x,y}`; `pixel`;  
+  `find_color(frame, rgb, tol=, region=)` · `count_color` · `scan_column` / `scan_row` · `largest_run`  
+  A named-app grab never silently becomes a full-desktop shot.
 - **When the next frame matters:** do **not** screenshot → chat → click.  
   `run_loop(step, app=, hz=30, seconds=12)` — `step` returns an action dict  
   (`hold`, `key`, `tap`, `tap_win`, `scroll`, `stop`). One process. Stop chip still aborts.
@@ -90,9 +91,9 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
   `ControlStopped` so the script cannot keep driving the Mac. After a stop,
   do not continue the task. On a later user request, call
   `enable_agent_cursor(True)` or `resume_control()` first.
-- Meta: `wait`, `wait_stable`, `verify(note, app?)` — screenshot + AX check
-  for the narrow set of actions where failure is silent (see below); not a
-  routine step after every click
+- Meta: `wait`, `wait_stable`, **`wait_for(text, app?, timeout=3)`** — poll AX
+  until a control appears (dialogs/sheets). Not a screenshot loop.
+  `verify(note, app?)` — screenshot + AX only when failure would be silent.
 
 ## Live view — only when they cannot already see it
 
