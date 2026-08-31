@@ -7,13 +7,27 @@ import time
 from pathlib import Path
 from typing import Any
 
-import Quartz
-from AppKit import NSBitmapImageRep, NSImage
+try:
+    import Quartz
+    from AppKit import NSBitmapImageRep, NSImage
+except ImportError:
+    Quartz = None
+    NSBitmapImageRep = None
+    NSImage = None
 
 from . import windows as winmod
 
 TMP = Path(tempfile.gettempdir()) / "desktop-harness"
 TMP.mkdir(exist_ok=True)
+
+
+def clip_rect(x: float, y: float, w: float, h: float, bound_w: float, bound_h: float) -> tuple[float, float, float, float]:
+    """Clip a bounding box within display boundaries."""
+    nx = max(0.0, min(float(x), float(bound_w)))
+    ny = max(0.0, min(float(y), float(bound_h)))
+    nw = max(0.0, min(float(w), float(bound_w) - nx))
+    nh = max(0.0, min(float(h), float(bound_h) - ny))
+    return (nx, ny, nw, nh)
 
 
 def _save_cgimage(image, path: Path) -> Path:

@@ -35,6 +35,19 @@ _AUDIT = Path(os.environ.get(
 ))
 
 
+_PROTECTED_SYSTEM_PROCESSES = {
+    "csrss.exe", "explorer.exe", "lsass.exe", "services.exe",
+    "smss.exe", "svchost.exe", "system", "wininit.exe", "winlogon.exe"
+}
+
+
+def is_protected_process(name: str) -> bool:
+    """Check if process name is a critical OS component."""
+    if not name:
+        return False
+    return name.lower().strip() in _PROTECTED_SYSTEM_PROCESSES
+
+
 def allow_sensitive() -> bool:
     return os.environ.get("DH_ALLOW_SENSITIVE", "").lower() in ("1", "true", "yes")
 

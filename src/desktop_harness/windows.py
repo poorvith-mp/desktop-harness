@@ -4,9 +4,16 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import Quartz
-from AppKit import NSRunningApplication, NSWorkspace
-from CoreFoundation import CFRunLoopRunInMode, kCFRunLoopDefaultMode
+try:
+    import Quartz
+    from AppKit import NSRunningApplication, NSWorkspace
+    from CoreFoundation import CFRunLoopRunInMode, kCFRunLoopDefaultMode
+except ImportError:
+    Quartz = None
+    NSRunningApplication = None
+    NSWorkspace = None
+    CFRunLoopRunInMode = None
+    kCFRunLoopDefaultMode = None
 
 
 def _refresh_workspace() -> None:
