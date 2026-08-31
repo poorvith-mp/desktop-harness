@@ -31,16 +31,15 @@ TOKEN_PATH = Path(os.environ.get(
     Path.home() / ".desktop-harness" / "daemon.token",
 ))
 
-# Presence (halo + "Agent controlling" pill) is shown by scripts run through
+# Presence (halo + Working · Stop chip) is shown by scripts run through
 # this daemon and is only ever hidden by a script explicitly calling
-# hide_agent_presence(). The daemon outlives any single script — if the
-# calling agent's turn just ends (chat marks the task done, no more calls
-# come in) nothing else revisits that state, so the overlay sits on screen
-# indefinitely. ACCEPT_POLL_SECONDS makes the accept() loop below wake up
-# periodically even with no request pending; PRESENCE_IDLE_HIDE_SECONDS is
-# how long with no exec request before it self-clears. Both run on the
-# daemon's single (main) thread — required, see presence.py's threading note.
-ACCEPT_POLL_SECONDS = 3.0
+# hide_agent_presence(), a Stop click on the chip, or the idle timeout.
+# The daemon outlives any single script — if the calling agent's turn
+# just ends, nothing else revisits that state. ACCEPT_POLL_SECONDS makes
+# the accept() loop wake up so we can (a) idle-hide and (b) pump AppKit
+# so a Stop click still lands between scripts. Both run on the daemon's
+# single (main) thread — required, see presence.py's threading note.
+ACCEPT_POLL_SECONDS = 0.35
 PRESENCE_IDLE_HIDE_SECONDS = float(os.environ.get("DH_PRESENCE_IDLE_HIDE", "20"))
 
 
@@ -66,6 +65,10 @@ def _write_token() -> str:
 
 
 def is_running() -> bool:
+    # Inside the daemon process a ping would deadlock (single-threaded
+    # accept loop is busy running the current script).
+    if os.environ.get("DH_IN_DAEMON") == "1":
+        return True
     if not SOCKET_PATH.exists():
         return False
     try:
@@ -135,6 +138,7 @@ def serve() -> None:
             pass
 
     token = _write_token()
+    os.environ["DH_IN_DAEMON"] = "1"
 
     from .helpers import namespace
 
@@ -165,15 +169,27 @@ def serve() -> None:
             try:
                 conn, _ = srv.accept()
             except (TimeoutError, socket.timeout):
-                # No request in a while — self-clear a stale presence
-                # overlay instead of leaving it on screen until some
-                # future script happens to call hide_agent_presence().
+                # Deliver a Stop click that landed between scripts, then
+                # self-clear a stale presence overlay.
+                try:
+                    from . import presence
+                    presence.poll(deep=True)
+                except Exception:
+                    pass
                 idle = time.monotonic() - last_activity
                 if idle >= PRESENCE_IDLE_HIDE_SECONDS:
                     try:
                         from . import presence
                         if presence.active():
                             presence.hide()
+                        # Session over — a later turn can drive the Mac again.
+                        presence.clear_stop()
+                    except Exception:
+                        pass
+                    try:
+                        from . import stage as _stage
+                        if _stage.monitor_active():
+                            _stage.hide_monitor()
                     except Exception:
                         pass
                 continue
@@ -225,9 +241,14 @@ def serve() -> None:
                                 ns,
                                 ns,
                             )
-                    except Exception:
+                    except Exception as e:
                         ok = False
-                        err_msg = traceback.format_exc()
+                        from .presence import ControlStopped
+                        from .input import PointerTaken
+                        if isinstance(e, (ControlStopped, PointerTaken)):
+                            err_msg = f"stopped: {e}\n"
+                        else:
+                            err_msg = traceback.format_exc()
                     last_activity = time.monotonic()
                     _reply({
                         "ok": ok,

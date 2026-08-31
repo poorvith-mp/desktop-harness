@@ -1,42 +1,21 @@
-# Observe loop — build, see, fix
+# Observe loop — after you build something visible
 
-**Optional for end users. Recommended for agents building anything visual.**
-
-Normal desktop-harness control (open app, click, type) does **not** need this loop.
-Use it when you’re **shipping or polishing UI** (presence, a page, a demo) so the
-agent sees the same pixels you do.
+Everyday harness control (open, click, type) does **not** use this.
+Use it when you **just built or changed** the pixels (a page, overlay, demo).
 
 ```
-demo  →  screenshot  →  look at the image  →  fix  →  demo again
+run → use like a person → capture → read the PNG → fix → again (max 3)
 ```
 
-Do **not** declare “looks good” without reading a capture.  
-Do **not** push every micro-tweak — only after a loop pass you’re proud of.
+Do not say “looks good” without reading a capture.  
+Do not vision-loop every click — AX first, then one look at the result.
 
-## Steps (agent)
+```bash
+desktop-harness -c 'print(screenshot(app="Google Chrome"))'
+# then read that PNG
+```
 
-1. **Run the thing** (demo script / harness action).  
-2. **Capture** full screen (or window) while it runs:
-   ```bash
-   mkdir -p /tmp/dh-observe
-   screencapture -x /tmp/dh-observe/01.png
-   ```
-3. **Read the image** with the image tool (`read_file` on the PNG).  
-4. **Note what’s wrong** in plain language (position, contrast, lag, wrong chrome…).  
-5. **Fix code** for those notes only.  
-6. **Demo + capture again** until notes are empty or only polish.  
-7. **Then** commit/push if the user wants it public.
-
-## Why
-
-You and the agent should see the **same pixels**.  
-Vision on a screenshot is how the agent “sits next to you” without guessing.
-
-For a single action during normal (non-presence) control, you don't need
-this whole loop — call `verify()` (see SKILL.md) and read the one
-screenshot it returns. This loop is for when you're iterating on *how
-something looks or behaves over time*, where one frame can't tell you
-whether it's actually working.
+Web: `open -a "Google Chrome" <url>`. Hide presence when the pass ends.
 
 ## Presence UI specifically
 
@@ -52,9 +31,9 @@ Take many frames while moving so lag/desync shows up:
 
 - [ ] **One** cursor only — soft halo around system pointer, never a second arrow  
 - [ ] Halo locked to warp target (no “dragging a second cursor”)  
-- [ ] Move = soft blue; click = brief red then blue  
-- [ ] Banner fully on-screen (not half in Dock), neon edge readable  
-- [ ] Hands-off meaning is obvious  
+- [ ] Move = ice ring; click = brief amber then ice  
+- [ ] Chip sits **outside** the driven window; only the pill is hittable  
+- [ ] Chip reads **Working · Stop** and a click aborts control  
 - [ ] Multiple frames reviewed, not one still
 - [ ] **A click lands on a different app mid-sequence, and the demo keeps
       going for several more seconds afterward.** Confirm via frames taken

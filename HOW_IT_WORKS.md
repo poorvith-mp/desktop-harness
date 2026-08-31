@@ -18,6 +18,11 @@ PY
 
 Optional **daemon** keeps the program warm so the *second* action is much faster than restarting Python every time.
 
+When the **next frame** is the action, a chat turn is too slow. Use
+`grab_frame` + `find_color` / `scan_column` + `run_loop` so see→act
+stays in one process. The script names the colors and keys. The harness
+does not know what app it is looking at.
+
 ---
 
 ## Can it move the real mouse?

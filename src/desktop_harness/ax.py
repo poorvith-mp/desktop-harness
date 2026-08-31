@@ -424,6 +424,21 @@ def find(
             score += 15
         elif n.get("role") in _INTERACTIVE:
             score += 5
+        # Transport words (Play/Pause/Next/Previous) appear many times in
+        # list rows. Prefer the lowest on-screen hit — that's the player bar.
+        if q in ("play", "pause", "next", "previous", "prev") and (
+            title == q or label == q
+        ):
+            fr = n.get("frame") or {}
+            y = float(fr.get("y") or 0)
+            h = float(fr.get("h") or 0)
+            if y > 700:
+                score += 40
+            elif y > 400:
+                score += 10
+            # Tiny 16–24px chrome buttons in a queue are worse than the bar
+            if 20 <= h <= 48 and y > 600:
+                score += 15
         return score
 
     # Fast path: interactive-only compact tree (windows only — skip menubar noise)
@@ -439,8 +454,11 @@ def find(
             if s >= 100 and len(hits) >= 1:
                 # exact title/label — good enough, skip deep rescan
                 break
-    # Slow path only if nothing useful — include menubar so File/Edit items still work
-    if not hits or hits[0][0] < 60:
+    # Slow path only if nothing useful. Use the *best* score, not the
+    # first node in tree order — a weak desc-match listed before an
+    # exact button used to force a full menubar walk every time.
+    best = max((s for s, _ in hits), default=0)
+    if best < 60:
         nodes = ax_snapshot(
             app, max_nodes=450, max_depth=12, interactive_only=False,
             include_el=True, include_menubar=True,

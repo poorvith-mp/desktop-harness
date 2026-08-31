@@ -3,8 +3,8 @@
 Design rules (from observe loop):
   - NEVER draw a second pointer shape (dual-cursor lag is unusable)
   - System cursor stays; we only draw a soft HALO locked to the warp target
-  - Move = cool blue glow; click = brief red flash, then blue again
-  - Bottom neon bar fully above Dock (window level + margin + pad math)
+  - Move = cool ice ring; click = brief amber flash, then ice again
+  - Large glass island above the Dock (discoverable; not under the notch)
 
 DH_PRESENCE=0 disables everything.
 """
@@ -16,10 +16,21 @@ from typing import Any
 
 _halo = None
 _banner = None
+_frame = None  # ice border around the window being driven
 _app = None
 _active = False
 _last_cg: tuple[float, float] | None = None
 _mode = "blue"  # blue | red
+_frame_target: tuple[float, float, float, float] | None = None  # x,y,w,h CG
+_stopped = False
+_stop_source: str | None = None
+
+
+class ControlStopped(RuntimeError):
+    """User took the Mac back — Working chip was clicked."""
+
+# Grok ice — same family as the cursor halo
+_ICE = (0.45, 0.78, 1.00)
 
 # IMPORTANT — main thread only. AppKit asserts on non-main-thread window
 # calls and hard-aborts the whole process (SIGABRT, unrecoverable, no
@@ -30,13 +41,68 @@ _mode = "blue"  # blue | red
 # calling into presence (which must be the main thread).
 
 # Halo canvas — circle centered on cursor tip
-_SIZE = 40.0
-_FLASH = 48.0
+_SIZE = 52.0
+_FLASH = 62.0
 
 
 def enabled() -> bool:
     v = os.environ.get("DH_PRESENCE", "1").lower()
     return v not in ("0", "false", "no", "off")
+
+
+def stopped() -> bool:
+    """True after the user clicks Stop on the Working chip."""
+    return _stopped
+
+
+def clear_stop() -> None:
+    """Allow control again. Only call when the user asked to continue."""
+    global _stopped, _stop_source
+    _stopped = False
+    _stop_source = None
+
+
+def request_stop(source: str = "chip") -> None:
+    """Abort agent control. Safe to call from AppKit mouseDown."""
+    global _stopped, _stop_source
+    _stopped = True
+    _stop_source = source
+    try:
+        from . import safety as _safety
+        _safety.audit("user_stop", {"source": source})
+    except Exception:
+        pass
+    hide()
+    try:
+        from . import stage as _stage
+        _stage.hide_monitor()
+    except Exception:
+        pass
+    try:
+        from . import input as _input
+        _input.set_overlay(None)
+    except Exception:
+        pass
+
+
+def poll(*, deep: bool = False) -> None:
+    """Pump AppKit so a Stop click is delivered. No-op if nothing is up."""
+    if _app is None and not _active:
+        return
+    if deep:
+        _pump(n=6, seconds=0.014)
+    else:
+        _pump(n=2, seconds=0.004)
+
+
+def assert_running(*, pump: bool = True) -> None:
+    """Raise ControlStopped if the user clicked Stop."""
+    if pump:
+        poll(deep=False)
+    if _stopped:
+        raise ControlStopped(
+            "user stopped desktop-harness from the Working chip"
+        )
 
 
 def _ensure_app():
@@ -76,8 +142,8 @@ def _pump(n: int = 4, seconds: float = 0.01):
         pass
 
 
-def _style_panel(panel, boost: int = 0):
-    from AppKit import NSColor, NSPopUpMenuWindowLevel, NSFloatingWindowLevel
+def _style_panel(panel, boost: int = 0, click_through: bool = True):
+    from AppKit import NSColor, NSPopUpMenuWindowLevel
     try:
         # Above Dock / most chrome
         panel.setLevel_(int(NSPopUpMenuWindowLevel) + 8 + boost)
@@ -85,7 +151,7 @@ def _style_panel(panel, boost: int = 0):
         panel.setLevel_(100 + boost)
     panel.setOpaque_(False)
     panel.setBackgroundColor_(NSColor.clearColor())
-    panel.setIgnoresMouseEvents_(True)
+    panel.setIgnoresMouseEvents_(bool(click_through))
     panel.setHasShadow_(False)
     try:
         panel.setHidesOnDeactivate_(False)
@@ -95,6 +161,11 @@ def _style_panel(panel, boost: int = 0):
         panel.setCollectionBehavior_(1 << 0 | 1 << 7 | 1 << 3)
     except Exception:
         pass
+    if not click_through:
+        try:
+            panel.setAcceptsMouseMovedEvents_(False)
+        except Exception:
+            pass
 
 
 def _cg_to_center_origin(cg_x: float, cg_y: float, size: float) -> tuple[float, float]:
@@ -108,6 +179,45 @@ def _cg_to_center_origin(cg_x: float, cg_y: float, size: float) -> tuple[float, 
     cocoa_cx = float(mf.origin.x) + float(cg_x)
     cocoa_cy = float(mf.origin.y) + float(mf.size.height) - float(cg_y)
     return cocoa_cx - size / 2.0, cocoa_cy - size / 2.0
+
+
+class _StopChipView:
+    """Clickable Working chip — click anywhere on the pill to stop control."""
+    _cls = None
+
+    @classmethod
+    def view_class(cls):
+        if cls._cls is not None:
+            return cls._cls
+        from AppKit import NSView
+
+        class StopChipView(NSView):
+            def isFlipped(self):
+                return False
+
+            def acceptsFirstMouse_(self, event):
+                return True
+
+            def mouseDown_(self, event):
+                request_stop("chip")
+
+            def hitTest_(self, point):
+                # Only the dark pill — the bloom/pad must not steal
+                # clicks meant for the app underneath.
+                pf = getattr(self, "pill_frame", None)
+                if not pf:
+                    return None
+                x, y, w, h = pf
+                try:
+                    px, py = float(point.x), float(point.y)
+                except Exception:
+                    return None
+                if x <= px <= x + w and y <= py <= y + h:
+                    return self
+                return None
+
+        cls._cls = StopChipView
+        return cls._cls
 
 
 class _HaloView:
@@ -127,8 +237,7 @@ class _HaloView:
                 return False
 
             def drawRect_(self, rect):
-                from AppKit import NSBezierPath, NSColor, NSRectFill, NSGradient
-                from Foundation import NSMakePoint
+                from AppKit import NSBezierPath, NSColor, NSRectFill
 
                 NSColor.clearColor().set()
                 NSRectFill(self.bounds())
@@ -136,31 +245,16 @@ class _HaloView:
                 b = self.bounds()
                 cx = b.size.width / 2.0
                 cy = b.size.height / 2.0
-                # Leave a clear hole in the center so the real cursor tip stays sharp
-                outer_r = min(b.size.width, b.size.height) / 2.0 - 1.0
-                inner_r = 5.0
+                # Clear hole so the real cursor tip stays sharp
+                outer_r = min(b.size.width, b.size.height) / 2.0 - 0.5
+                inner_r = 6.5
+                click = self.mode == "red"
 
-                if self.mode == "red":
-                    # Click: soft warm red ring
-                    rings = (
-                        (outer_r, 0.98, 0.30, 0.25, 0.22),
-                        (outer_r * 0.72, 0.98, 0.35, 0.28, 0.16),
-                        (outer_r * 0.48, 1.0, 0.45, 0.35, 0.10),
-                    )
-                else:
-                    # Move/idle: soft blue ring
-                    rings = (
-                        (outer_r, 0.30, 0.55, 1.0, 0.20),
-                        (outer_r * 0.72, 0.35, 0.60, 1.0, 0.14),
-                        (outer_r * 0.48, 0.45, 0.70, 1.0, 0.09),
-                    )
-
-                for r, rr, gg, bb, aa in rings:
+                def _ring(r, rr, gg, bb, aa):
                     path = NSBezierPath.bezierPath()
                     path.appendBezierPathWithOvalInRect_(
                         ((cx - r, cy - r), (2 * r, 2 * r))
                     )
-                    # punch hole
                     hole = NSBezierPath.bezierPath()
                     hole.appendBezierPathWithOvalInRect_(
                         ((cx - inner_r, cy - inner_r), (2 * inner_r, 2 * inner_r))
@@ -175,22 +269,38 @@ class _HaloView:
                     ).set()
                     path.fill()
 
-                # Thin bright rim (subtle neon edge)
-                rim = NSBezierPath.bezierPath()
-                rim.appendBezierPathWithOvalInRect_(
-                    ((cx - outer_r + 0.5, cy - outer_r + 0.5),
-                     (2 * (outer_r - 0.5), 2 * (outer_r - 0.5)))
-                )
-                rim.setLineWidth_(1.2)
-                if self.mode == "red":
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                        1.0, 0.40, 0.30, 0.55
-                    ).set()
+                if click:
+                    # Amber pulse — confirm the click, then settle
+                    _ring(outer_r, 1.00, 0.42, 0.16, 0.22)
+                    _ring(outer_r * 0.78, 1.00, 0.52, 0.22, 0.28)
+                    _ring(outer_r * 0.56, 1.00, 0.68, 0.34, 0.18)
+                    rim_rgb = (1.00, 0.78, 0.42, 0.95)
+                    hair_rgb = (1.00, 0.92, 0.76, 0.70)
                 else:
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                        0.45, 0.75, 1.0, 0.45
-                    ).set()
+                    # Ice ring — readable on light *and* dark, not a second pointer
+                    _ring(outer_r, 0.28, 0.58, 1.00, 0.18)
+                    _ring(outer_r * 0.80, 0.40, 0.72, 1.00, 0.26)
+                    _ring(outer_r * 0.58, 0.62, 0.84, 1.00, 0.16)
+                    rim_rgb = (0.82, 0.92, 1.00, 0.95)
+                    hair_rgb = (0.95, 0.98, 1.00, 0.55)
+
+                rim = NSBezierPath.bezierPath()
+                rim_r = outer_r * 0.86
+                rim.appendBezierPathWithOvalInRect_(
+                    ((cx - rim_r, cy - rim_r), (2 * rim_r, 2 * rim_r))
+                )
+                rim.setLineWidth_(1.15)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(*rim_rgb).set()
                 rim.stroke()
+
+                hair = NSBezierPath.bezierPath()
+                hair.appendBezierPathWithOvalInRect_(
+                    ((cx - inner_r - 1.2, cy - inner_r - 1.2),
+                     (2 * (inner_r + 1.2), 2 * (inner_r + 1.2)))
+                )
+                hair.setLineWidth_(0.8)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(*hair_rgb).set()
+                hair.stroke()
 
         cls._cls = HaloView
         return cls._cls
@@ -253,93 +363,105 @@ def _make_banner():
 
     _ensure_app()
     px, py, pw, ph, w, h, pad = _banner_layout()
+    # Nonactivating so a Stop click does not steal focus from the driven app.
+    style = NSWindowStyleMaskBorderless
+    try:
+        from AppKit import NSNonactivatingPanelMask
+        style = int(NSWindowStyleMaskBorderless) | int(NSNonactivatingPanelMask)
+    except Exception:
+        pass
     panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, pw, ph),
-        NSWindowStyleMaskBorderless,
+        style,
         2,
         False,
     )
-    _style_panel(panel, boost=2)
+    _style_panel(panel, boost=2, click_through=False)
+    try:
+        panel.setBecomesKeyOnlyIfNeeded_(True)
+    except Exception:
+        pass
 
-    root = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+    Root = _StopChipView.view_class()
+    root = Root.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+    root.pill_frame = (pad, pad, w, h)
     root.setWantsLayer_(True)
     if root.layer() is not None:
         root.layer().setBackgroundColor_(CGColorCreateGenericRGB(0, 0, 0, 0))
 
-    # Neon wash under pill
-    halo = NSView.alloc().initWithFrame_(
-        NSMakeRect(pad - 5, pad - 5, w + 10, h + 10)
+    bloom = NSView.alloc().initWithFrame_(
+        NSMakeRect(pad - 10, pad - 8, w + 20, h + 16)
     )
-    halo.setWantsLayer_(True)
-    if halo.layer() is not None:
-        halo.layer().setCornerRadius_((h + 10) / 2.0)
-        halo.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.18, 0.48, 1.0, 0.18)
+    bloom.setWantsLayer_(True)
+    if bloom.layer() is not None:
+        bloom.layer().setCornerRadius_((h + 16) / 2.0)
+        bloom.layer().setBackgroundColor_(
+            CGColorCreateGenericRGB(0.22, 0.48, 0.95, 0.22)
         )
         try:
-            halo.layer().setShadowOpacity_(1.0)
-            halo.layer().setShadowRadius_(18.0)
-            halo.layer().setShadowOffset_((0, 0))
-            halo.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.30, 0.60, 1.0, 1.0)
+            bloom.layer().setShadowOpacity_(1.0)
+            bloom.layer().setShadowRadius_(22.0)
+            bloom.layer().setShadowOffset_((0, 0))
+            bloom.layer().setShadowColor_(
+                CGColorCreateGenericRGB(0.30, 0.62, 1.0, 1.0)
             )
         except Exception:
             pass
-    root.addSubview_(halo)
+    root.addSubview_(bloom)
 
     pill = NSView.alloc().initWithFrame_(NSMakeRect(pad, pad, w, h))
     pill.setWantsLayer_(True)
     if pill.layer() is not None:
         pill.layer().setCornerRadius_(h / 2.0)
         pill.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.05, 0.06, 0.09, 0.92)
+            CGColorCreateGenericRGB(0.06, 0.07, 0.10, 0.90)
         )
-        pill.layer().setBorderWidth_(1.6)
+        pill.layer().setBorderWidth_(1.2)
         pill.layer().setBorderColor_(
-            CGColorCreateGenericRGB(0.40, 0.75, 1.0, 0.98)
+            CGColorCreateGenericRGB(0.55, 0.80, 1.0, 0.85)
         )
         try:
-            pill.layer().setShadowOpacity_(1.0)
-            pill.layer().setShadowRadius_(14.0)
+            pill.layer().setShadowOpacity_(0.95)
+            pill.layer().setShadowRadius_(16.0)
             pill.layer().setShadowOffset_((0, 0))
             pill.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.35, 0.70, 1.0, 1.0)
+                CGColorCreateGenericRGB(0.28, 0.58, 1.0, 0.95)
             )
         except Exception:
             pass
 
-    pip = NSView.alloc().initWithFrame_(NSMakeRect(16, (h - 7) / 2.0, 7, 7))
+    pip = NSView.alloc().initWithFrame_(NSMakeRect(18, (h - 9) / 2.0, 9, 9))
     pip.setWantsLayer_(True)
     if pip.layer() is not None:
-        pip.layer().setCornerRadius_(3.5)
+        pip.layer().setCornerRadius_(4.5)
         pip.layer().setBackgroundColor_(
-            CGColorCreateGenericRGB(0.50, 0.80, 1.0, 1.0)
+            CGColorCreateGenericRGB(0.50, 0.82, 1.0, 1.0)
         )
         try:
             pip.layer().setShadowOpacity_(1.0)
-            pip.layer().setShadowRadius_(6.0)
+            pip.layer().setShadowRadius_(7.0)
             pip.layer().setShadowOffset_((0, 0))
             pip.layer().setShadowColor_(
-                CGColorCreateGenericRGB(0.4, 0.75, 1.0, 1.0)
+                CGColorCreateGenericRGB(0.45, 0.78, 1.0, 1.0)
             )
         except Exception:
             pass
     pill.addSubview_(pip)
 
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(30, 8, w - 46, h - 16))
-    label.setStringValue_("Agent controlling")
+    label = NSTextField.alloc().initWithFrame_(NSMakeRect(34, 8, w - 50, h - 16))
+    label.setStringValue_("Working · Stop")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
     label.setAlignment_(NSCenterTextAlignment)
     try:
-        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.97, 0.95))
-        label.setFont_(NSFont.systemFontOfSize_weight_(12.5, 0.25))
+        label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(0.98, 0.98))
+        label.setFont_(NSFont.systemFontOfSize_weight_(13.0, 0.35))
     except Exception:
         try:
             label.setTextColor_(NSColor.whiteColor())
-            label.setFont_(NSFont.systemFontOfSize_(12.5))
+            label.setFont_(NSFont.systemFontOfSize_(14.0))
         except Exception:
             pass
     pill.addSubview_(label)
@@ -352,16 +474,32 @@ def _make_banner():
 
 
 def _banner_layout():
+    """Chip centered on the window being driven (not the whole display)."""
     from AppKit import NSScreen
     screen = NSScreen.mainScreen()
-    pad = 20.0
-    w, h = 252.0, 38.0
+    pad = 18.0
+    w, h = 168.0, 36.0
     if screen is None:
         return 400.0, 90.0, w + 2 * pad, h + 2 * pad, w, h, pad
     vf = screen.visibleFrame()
-    margin = pad + 64.0  # fully clear of Dock
-    pill_x = vf.origin.x + (vf.size.width - w) / 2.0
-    pill_y = vf.origin.y + margin
+    # Prefer the ringed window; sit *outside* it so the pill never
+    # covers app pixels (that was a source of accidental clicks).
+    if _frame_target is not None:
+        gx, gy, gw, gh = _frame_target
+        cx, cy, cw, ch = _cg_rect_to_cocoa(gx, gy, gw, gh)
+        pill_x = cx + (cw - w) / 2.0
+        gap = 10.0
+        below = cy - h - gap
+        vmin = float(vf.origin.y)
+        vmax = vmin + float(vf.size.height) - h
+        if below >= vmin:
+            pill_y = below
+        else:
+            above = cy + ch + gap
+            pill_y = above if above <= vmax else max(vmin, below)
+    else:
+        pill_x = float(vf.origin.x) + (float(vf.size.width) - w) / 2.0
+        pill_y = float(vf.origin.y) + 18.0
     return (
         pill_x - pad,
         pill_y - pad,
@@ -382,28 +520,58 @@ def keep_alive(seconds: float) -> None:
     time (AppKit hard-aborts on window calls from a non-main thread; no
     Python exception, nothing to catch). This is the safe version: same
     effect, zero threads.
+
+    A Stop click during the wait raises ControlStopped so the script
+    cannot continue driving the Mac.
     """
+    if _stopped:
+        raise ControlStopped(
+            "user stopped desktop-harness from the Working chip"
+        )
     if not _active:
         time.sleep(max(0.0, seconds))
+        if _stopped:
+            raise ControlStopped(
+                "user stopped desktop-harness from the Working chip"
+            )
         return
     remaining = max(0.0, seconds)
-    step = 0.12
+    step = 0.08
     while remaining > 0:
+        if _stopped:
+            raise ControlStopped(
+                "user stopped desktop-harness from the Working chip"
+            )
         chunk = min(step, remaining)
         time.sleep(chunk)
         remaining -= chunk
         try:
+            poll(deep=True)
+            if _stopped:
+                raise ControlStopped(
+                    "user stopped desktop-harness from the Working chip"
+                )
             if _halo is not None:
                 _halo.orderFrontRegardless()
             if _banner is not None:
                 _banner.orderFrontRegardless()
-            _pump(n=1, seconds=0.003)
+            if _frame is not None:
+                _frame.orderFrontRegardless()
+            try:
+                from . import stage as _stage
+                _stage.tick()
+            except Exception:
+                pass
+        except ControlStopped:
+            raise
         except Exception:
             pass
 
 
 def show(x: float | None = None, y: float | None = None) -> bool:
     global _active, _mode
+    if _stopped:
+        return False
     if not enabled():
         return False
     try:
@@ -435,6 +603,14 @@ def show(x: float | None = None, y: float | None = None) -> bool:
 
         _active = True
         _place_halo(x, y, _SIZE)
+        try:
+            from . import windows as _win
+            front = _win.frontmost_app() or {}
+            name = front.get("name")
+            if name and name.lower() not in ("ghostty", "terminal", "iterm2"):
+                ring_window(name)
+        except Exception:
+            pass
         _pump(n=10, seconds=0.03)
         return True
     except Exception as e:
@@ -492,7 +668,7 @@ def click_flash(x: float, y: float) -> None:
 
 
 def hide() -> None:
-    global _halo, _banner, _active, _last_cg
+    global _halo, _banner, _frame, _active, _last_cg, _frame_target
     _active = False
     try:
         if _halo is not None:
@@ -501,9 +677,13 @@ def hide() -> None:
         if _banner is not None:
             _banner.orderOut_(None)
             _banner = None
+        if _frame is not None:
+            _frame.orderOut_(None)
+            _frame = None
     except Exception:
         pass
     _last_cg = None
+    _frame_target = None
     _pump(n=3, seconds=0.01)
 
 
@@ -524,11 +704,160 @@ def active() -> bool:
     return _active
 
 
+def chip_frame() -> dict[str, float] | None:
+    """CG bounds of the Working · Stop chip, or None if it is hidden."""
+    if _banner is None:
+        return None
+    try:
+        from AppKit import NSScreen
+        f = _banner.frame()
+        main = NSScreen.mainScreen()
+        if main is None:
+            return None
+        mf = main.frame()
+        # Cocoa bottom-left → CG top-left
+        x = float(f.origin.x) - float(mf.origin.x)
+        y = float(mf.origin.y) + float(mf.size.height) - (
+            float(f.origin.y) + float(f.size.height)
+        )
+        return {
+            "x": x,
+            "y": y,
+            "w": float(f.size.width),
+            "h": float(f.size.height),
+        }
+    except Exception:
+        return None
+
+
 def pulse():
     import Quartz
     ev = Quartz.CGEventCreate(None)
     p = Quartz.CGEventGetLocation(ev)
     click_flash(float(p.x), float(p.y))
+
+
+def _cg_rect_to_cocoa(x: float, y: float, w: float, h: float):
+    """CG top-left → Cocoa bottom-left for the main screen."""
+    from AppKit import NSScreen
+    main = NSScreen.mainScreen()
+    if main is None:
+        return x, -y - h, w, h
+    mf = main.frame()
+    cocoa_x = float(mf.origin.x) + float(x)
+    cocoa_y = float(mf.origin.y) + float(mf.size.height) - float(y) - float(h)
+    return cocoa_x, cocoa_y, float(w), float(h)
+
+
+class _FrameView:
+    """Hollow ice rectangle — Google-style agent chrome, Grok color."""
+    _cls = None
+
+    @classmethod
+    def view_class(cls):
+        if cls._cls is not None:
+            return cls._cls
+        from AppKit import NSView
+
+        class FrameView(NSView):
+            def isFlipped(self):
+                return False
+
+            def drawRect_(self, rect):
+                from AppKit import NSBezierPath, NSColor, NSRectFill
+                NSColor.clearColor().set()
+                NSRectFill(self.bounds())
+                b = self.bounds()
+                # Sequoia window chrome is ~14pt. Stroke is centered on
+                # the glass edge (panel padded by half the line width).
+                stroke = 2.5
+                half = stroke / 2.0
+                radius = 20.0
+                path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+                    ((half, half), (b.size.width - stroke, b.size.height - stroke)),
+                    radius,
+                    radius,
+                )
+                path.setLineWidth_(stroke)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    _ICE[0], _ICE[1], _ICE[2], 0.94
+                ).set()
+                path.stroke()
+
+        cls._cls = FrameView
+        return cls._cls
+
+
+def ring_window(app: str | int | None = None, window_id: int | None = None) -> bool:
+    """Draw a click-through ice frame around the window the agent is driving.
+
+    Only while presence is active. No second picture of the window.
+    """
+    global _frame, _frame_target
+    if not enabled():
+        return False
+    if not _active:
+        show()
+        if not _active:
+            return False
+    try:
+        from . import windows as _win
+        if window_id is not None:
+            fr = None
+            for w in _win.list_windows():
+                if w.get("id") == int(window_id):
+                    fr = w
+                    break
+            if fr is None:
+                return False
+        else:
+            fr = _win.window_frame(app)
+        x, y, w, h = float(fr["x"]), float(fr["y"]), float(fr["w"]), float(fr["h"])
+        # Half-stroke pad so the line is centered on the window edge.
+        pad = 1.25
+        x, y, w, h = x - pad, y - pad, w + 2 * pad, h + 2 * pad
+        _frame_target = (x, y, w, h)
+        cx, cy, cw, ch = _cg_rect_to_cocoa(x, y, w, h)
+        _ensure_app()
+        from AppKit import NSMakeRect, NSPanel, NSWindowStyleMaskBorderless
+        if _frame is None:
+            panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(cx, cy, cw, ch),
+                NSWindowStyleMaskBorderless,
+                2,
+                False,
+            )
+            _style_panel(panel, boost=1)
+            View = _FrameView.view_class()
+            view = View.alloc().initWithFrame_(NSMakeRect(0, 0, cw, ch))
+            panel.setContentView_(view)
+            _frame = panel
+        else:
+            _frame.setFrame_display_(NSMakeRect(cx, cy, cw, ch), False)
+            try:
+                _frame.contentView().setFrame_(NSMakeRect(0, 0, cw, ch))
+                _frame.contentView().setNeedsDisplay_(True)
+            except Exception:
+                pass
+        _frame.orderFrontRegardless()
+        _place_banner()
+        _pump(n=2, seconds=0.006)
+        return True
+    except Exception:
+        return False
+
+
+def _place_banner() -> None:
+    """Re-center the Working chip on the ringed window."""
+    if _banner is None:
+        return
+    try:
+        px, py, pw, ph, _, _, _ = _banner_layout()
+        from AppKit import NSMakeRect
+        _banner.setFrame_display_(NSMakeRect(px, py, pw, ph), False)
+        _banner.orderFrontRegardless()
+    except Exception:
+        pass
 
 
 # --- wire input.py overlay API ---

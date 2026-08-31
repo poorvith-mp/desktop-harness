@@ -38,12 +38,30 @@ _KEYCODES = {
 # Optional agent presence overlay (ring + banner)
 _overlay = None
 _auto_presence = True  # wire presence module on first motion if enabled
+_last_warp: tuple[float, float] | None = None
+_HUMAN_MOVE_PX = 18.0
+
+
+class PointerTaken(RuntimeError):
+    """User moved the mouse — refuse to click over them."""
 
 
 def set_overlay(overlay) -> None:
     """Attach visual presence (presence module)."""
     global _overlay
     _overlay = overlay
+
+
+def _assert_running(*, pump: bool = True) -> None:
+    """Honor a Stop click on the Working chip before mutating the Mac."""
+    try:
+        from . import presence
+        presence.assert_running(pump=pump)
+    except Exception as e:
+        from .presence import ControlStopped
+        if isinstance(e, ControlStopped):
+            raise
+        # Presence unavailable — still allow control.
 
 
 def _presence_move(x: float, y: float):
@@ -90,10 +108,29 @@ def _post_mouse(event_type: int, x: float, y: float, button=Quartz.kCGMouseButto
 
 def _warp(x: float, y: float):
     """Move the visible system cursor (what the human sees)."""
+    global _last_warp
     Quartz.CGWarpMouseCursorPosition(Quartz.CGPointMake(float(x), float(y)))
     # Associate next mouse event with warp so apps don't jump-correct
     Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+    _last_warp = (float(x), float(y))
     _presence_move(x, y)
+
+
+def human_is_driving() -> bool:
+    """True if the pointer moved without us warping it — user has the mouse."""
+    if _last_warp is None:
+        return False
+    p = mouse_pos()
+    return math.hypot(p["x"] - _last_warp[0], p["y"] - _last_warp[1]) > _HUMAN_MOVE_PX
+
+
+def _guard_click() -> None:
+    """Fail closed: never click on top of a human who just moved the mouse."""
+    if human_is_driving():
+        raise PointerTaken(
+            "refusing click: the pointer moved independently "
+            "(you are using the mouse)"
+        )
 
 
 def move_to(
@@ -109,6 +146,7 @@ def move_to(
     Set DH_MOUSE_INSTANT=1 to warp with zero animation.
     """
     import os
+    _assert_running()
     if os.environ.get("DH_MOUSE_INSTANT", "").lower() in ("1", "true", "yes"):
         duration = 0
     start = mouse_pos()
@@ -135,6 +173,7 @@ def move_to(
         _warp(xi, yi)
         _post_mouse(Quartz.kCGEventMouseMoved, xi, yi)
         time.sleep(dt)
+        _assert_running()
     return {"x": float(x), "y": float(y)}
 
 
@@ -161,18 +200,60 @@ def wiggle(amplitude: float = 12.0, cycles: int = 2, duration: float = 0.35):
     return origin
 
 
+def tap(x: float, y: float, *, double: bool = False) -> dict[str, float]:
+    """Instant click. No pointer animation, no settle sleep.
+
+    Use this inside a tight loop. Everyday ``click()`` still animates so
+    a human can watch a one-off action.
+    """
+    _assert_running(pump=False)
+    _guard_click()
+    _warp(x, y)
+    _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    _guard_click()
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    if double:
+        _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+        _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
+    return {"x": float(x), "y": float(y)}
+
+
+def mouse_down(x: float, y: float) -> dict[str, float]:
+    """Press and hold the left button at (x, y). Pair with mouse_up."""
+    _assert_running(pump=False)
+    _guard_click()
+    _warp(x, y)
+    _post_mouse(Quartz.kCGEventMouseMoved, x, y)
+    _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
+    return {"x": float(x), "y": float(y)}
+
+
+def mouse_up(x: float | None = None, y: float | None = None) -> dict[str, float]:
+    """Release the left button. Defaults to the current pointer."""
+    if x is None or y is None:
+        p = mouse_pos()
+        x = p["x"] if x is None else x
+        y = p["y"] if y is None else y
+    _post_mouse(Quartz.kCGEventLeftMouseUp, float(x), float(y))
+    return {"x": float(x), "y": float(y)}
+
+
 def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
           move: bool = True, duration: float = 0.06):
     """Left click at global screen coordinates. Moves the real pointer first.
 
     duration default is short (0.06s) for agent speed; pass higher for demos.
     """
+    _assert_running()
+    _guard_click()
     if move:
         move_to(x, y, duration=duration)
     else:
         _warp(x, y)
         _post_mouse(Quartz.kCGEventMouseMoved, x, y)
     time.sleep(0.02)
+    _guard_click()
     _presence_click(x, y)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x, y)
     _post_mouse(Quartz.kCGEventLeftMouseUp, x, y)
@@ -184,6 +265,8 @@ def click(x: float, y: float, *, double: bool = False, settle: float = 0.04,
 
 
 def right_click(x: float, y: float, settle: float = 0.05, move: bool = True):
+    _assert_running()
+    _guard_click()
     if move:
         move_to(x, y, duration=0.12)
     else:
@@ -205,6 +288,8 @@ def click_frame(frame: dict, *, double: bool = False):
 def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
          duration: float = 0.35):
     """Drag with visible pointer motion."""
+    _assert_running()
+    _guard_click()
     move_to(x1, y1, duration=0.12)
     _post_mouse(Quartz.kCGEventLeftMouseDown, x1, y1)
     dt = duration / max(steps, 1)
@@ -219,12 +304,14 @@ def drag(x1: float, y1: float, x2: float, y2: float, steps: int = 20,
             None, Quartz.kCGEventLeftMouseDragged, pt, Quartz.kCGMouseButtonLeft)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
         time.sleep(dt)
+        _assert_running()
     _post_mouse(Quartz.kCGEventLeftMouseUp, x2, y2)
     time.sleep(0.03)
 
 
 def scroll(dx: int = 0, dy: int = 3, x: float | None = None, y: float | None = None):
     """Scroll wheel at optional location (moves pointer there first)."""
+    _assert_running()
     if x is not None and y is not None:
         move_to(x, y, duration=0.1)
     ev = Quartz.CGEventCreateScrollWheelEvent(
@@ -239,18 +326,78 @@ def _key_event(keycode: int, down: bool, flags: int = 0):
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
 
 
-def key(name: str, *, settle: float = 0.03):
-    """Press a named key (return, escape, tab, …)."""
+_held_keys: set[str] = set()
+
+
+def _code_for(name: str) -> int:
     code = _KEYCODES.get(name.lower())
     if code is None:
         raise ValueError(f"unknown key: {name!r}")
-    _key_event(code, True)
-    _key_event(code, False)
+    return code
+
+
+def key(name: str, *, settle: float = 0.03):
+    """Press a named key (return, escape, tab, …)."""
+    _assert_running()
+    _key_event(_code_for(name), True)
+    _key_event(_code_for(name), False)
     time.sleep(settle)
+
+
+def key_down(name: str) -> str:
+    """Hold a key down. Pair with key_up / keys_hold. No settle sleep."""
+    _assert_running(pump=False)
+    n = name.lower()
+    if n not in _held_keys:
+        _key_event(_code_for(n), True)
+        _held_keys.add(n)
+    return n
+
+
+def key_up(name: str) -> str:
+    """Release a held key."""
+    n = name.lower()
+    if n in _held_keys:
+        try:
+            _key_event(_code_for(n), False)
+        except Exception:
+            pass
+        _held_keys.discard(n)
+    return n
+
+
+def keys_hold(names: list[str] | set[str] | tuple[str, ...] | None = None) -> list[str]:
+    """Make *exactly* these keys be down. Releases anything else we held.
+
+    Hold W and release S in one call — no tap-gap. Same primitive for
+    a game, a video scrub, or any key that must stay down.
+    """
+    _assert_running(pump=False)
+    want = {str(n).lower() for n in (names or [])}
+    for n in list(_held_keys - want):
+        key_up(n)
+    for n in want - _held_keys:
+        key_down(n)
+    return sorted(_held_keys)
+
+
+def release_keys() -> None:
+    """Release every key this process is holding. Safe in finally/Stop."""
+    for n in list(_held_keys):
+        try:
+            _key_event(_code_for(n), False)
+        except Exception:
+            pass
+    _held_keys.clear()
+
+
+def held_keys() -> list[str]:
+    return sorted(_held_keys)
 
 
 def hotkey(*keys: str, settle: float = 0.05):
     """Chord like hotkey('cmd', 's') or hotkey('cmd', 'shift', 't')."""
+    _assert_running()
     parts = [k.lower() for k in keys]
     flags = 0
     mods = []
@@ -297,6 +444,11 @@ _MEDIA_KEYCODES = {
     "prev": 18,
     "fast": 19,
     "rewind": 20,
+    "volumeup": 0,
+    "volup": 0,
+    "volumedown": 1,
+    "voldown": 1,
+    "mute": 7,
 }
 
 
@@ -307,6 +459,7 @@ def media_key(name: str = "playpause", *, settle: float = 0.05) -> str:
     (YT Music Safari Web App is the classic case). Prefer
     ``ensure_media_playing`` first for native AX players.
     """
+    _assert_running()
     code = _MEDIA_KEYCODES.get(name.lower().strip())
     if code is None:
         raise ValueError(
@@ -345,7 +498,8 @@ def media_key(name: str = "playpause", *, settle: float = 0.05) -> str:
 
 def type_text(text: str, *, delay: float = 0.008):
     """Type unicode via CGEvent keyboard with unicode string."""
-    for ch in text:
+    _assert_running()
+    for i, ch in enumerate(text):
         if ch == "\n":
             key("return")
             continue
@@ -361,3 +515,5 @@ def type_text(text: str, *, delay: float = 0.008):
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_up)
         if delay:
             time.sleep(delay)
+        if i % 8 == 7:
+            _assert_running()

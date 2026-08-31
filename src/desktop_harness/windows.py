@@ -4,9 +4,16 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import Quartz
-from AppKit import NSRunningApplication, NSWorkspace
-from CoreFoundation import CFRunLoopRunInMode, kCFRunLoopDefaultMode
+try:
+    import Quartz
+    from AppKit import NSRunningApplication, NSWorkspace
+    from CoreFoundation import CFRunLoopRunInMode, kCFRunLoopDefaultMode
+except ImportError:
+    Quartz = None
+    NSRunningApplication = None
+    NSWorkspace = None
+    CFRunLoopRunInMode = None
+    kCFRunLoopDefaultMode = None
 
 
 def _refresh_workspace() -> None:
@@ -41,8 +48,29 @@ def list_apps() -> list[dict[str, Any]]:
     return out
 
 
+# CGWindowList is the expensive part of window_frame / screenshot / ring.
+# A single agent step can call it several times in a few milliseconds
+# against a desktop that has not moved. 80ms never hides a real window
+# change (activate/settle waits are longer) but collapses the repeats.
+_WIN_CACHE_TTL = 0.08
+_win_cache: tuple[float, bool, list[dict[str, Any]]] | None = None
+
+
+def _invalidate_window_cache() -> None:
+    global _win_cache
+    _win_cache = None
+
+
 def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
     """On-screen windows with bounds (global screen points)."""
+    global _win_cache
+    now = time.monotonic()
+    if (
+        _win_cache is not None
+        and _win_cache[1] is on_screen_only
+        and (now - _win_cache[0]) < _WIN_CACHE_TTL
+    ):
+        return list(_win_cache[2])
     opts = Quartz.kCGWindowListOptionOnScreenOnly if on_screen_only else 0
     raw = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []
     out = []
@@ -65,7 +93,8 @@ def list_windows(on_screen_only: bool = True) -> list[dict[str, Any]]:
             "w": width,
             "h": height,
         })
-    return out
+    _win_cache = (time.monotonic(), on_screen_only, out)
+    return list(out)
 
 
 def window_frame(app: str | int | None = None) -> dict[str, Any]:
@@ -90,19 +119,39 @@ def window_frame(app: str | int | None = None) -> dict[str, Any]:
         info = find_app(app)
         pid = (info or {}).get("pid")
 
+    def _match(wins: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        q = (name or "").lower()
+        for w in wins:
+            owner = (w.get("app") or "").lower()
+            # Owner / pid only — never match because some *other* app's title
+            # mentions us (a Ghostty tab named "Notes" is not Notes.app).
+            if pid is not None and int(w.get("pid") or 0) == int(pid):
+                if float(w.get("w") or 0) >= 50 and float(w.get("h") or 0) >= 50:
+                    out.append(w)
+                continue
+            if q and (owner == q or q in owner):
+                if float(w.get("w") or 0) >= 50 and float(w.get("h") or 0) >= 50:
+                    out.append(w)
+        return out
+
     wins = list_windows(on_screen_only=True)
-    matched: list[dict[str, Any]] = []
-    q = (name or "").lower()
-    for w in wins:
-        if pid is not None and int(w.get("pid") or 0) == int(pid):
-            matched.append(w)
-            continue
-        if q and q in (w.get("app") or "").lower():
-            matched.append(w)
-    # Fallback: any on-screen window if caller asked for frontmost and
-    # ownership metadata was briefly stale (CGWindowList vs NSWorkspace).
+    matched = _match(wins)
+    # Frontmost but on another Space / "off-screen" to CGWindowList —
+    # still a real window we can capture and drive after activate.
+    if not matched:
+        matched = _match(list_windows(on_screen_only=False))
     if not matched and app is None and wins:
-        matched = list(wins)
+        front = frontmost_app() or {}
+        fname = (front.get("name") or "").lower()
+        fpid = front.get("pid")
+        matched = [
+            w for w in wins
+            if (fpid and int(w.get("pid") or 0) == int(fpid))
+            or (fname and fname in (w.get("app") or "").lower())
+        ]
+        if not matched:
+            matched = list(wins)
     if not matched:
         raise RuntimeError(
             f"no on-screen window for app {app!r} "
@@ -243,6 +292,7 @@ def activate(name_or_bundle: str, wait: float | None = None) -> dict[str, Any]:
     if app_info.get("active") and not cold:
         _safety.audit("activate_skip", {"name": name_or_bundle, "reason": "already_frontmost"})
         return app_info
+    _invalidate_window_cache()
     apps = NSRunningApplication.runningApplicationsWithBundleIdentifier_(
         app_info["bundle_id"]) if app_info["bundle_id"] else []
     if apps:

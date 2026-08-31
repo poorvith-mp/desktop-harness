@@ -8,7 +8,7 @@ def run_demo() -> int:
     from . import helpers as H
 
     print("desktop-harness live demo")
-    print("Watch: soft blue ring + top pill 'Agent active — hands off'\n")
+    print("Watch: ice ring + ice frame + bottom Working · Stop chip\n")
 
     print("1) frontmost:", H.frontmost_app())
     print("2) mouse at:", H.mouse_pos())
@@ -16,11 +16,11 @@ def run_demo() -> int:
 
     print("3) open TextEdit")
     H.open_app("TextEdit")
-    time.sleep(0.4)
+    H.wait(0.4)
 
     # New doc if needed
     H.hotkey("cmd", "n")
-    time.sleep(0.35)
+    H.wait(0.35)
 
     wins = [w for w in H.list_windows() if w["app"] == "TextEdit"]
     if wins:
@@ -37,7 +37,7 @@ def run_demo() -> int:
     msg = "desktop-harness works — built with Grok Build"
     print(f"5) type: {msg!r}")
     H.type_text(msg)
-    time.sleep(0.6)
+    H.wait(0.6)
 
     print("6) labels sample:")
     for line in H.labels("TextEdit")[:8]:

@@ -18,7 +18,7 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **How it sees** | **Accessibility tree first**, screenshots only as fallback |
 | **How it acts** | Real system mouse + keyboard (`CGEvent`) + AX press |
 | **Platform** | macOS (Sequoia+ recommended) |
-| **Status** | v0.4.3 |
+| **Status** | v0.6.4 |
 | **Built with** | [Grok Build](https://grok.com) |
 
 ---
@@ -35,6 +35,11 @@ You → Grok Build (or another agent) → desktop-harness → your Mac
 | **MCP** | Not required; could wrap the same API later |
 
 Agents already have shell. A thin CLI is the lowest-friction path for Grok Build today.
+
+**Stage (v0.5):** for a *web* task that should not steal the screen,
+`open_stage(url)` opens a small dedicated Chrome plus a live picture of
+**that** window. Everyday control of an app already on screen does **not**
+pop a second copy of it.
 
 ---
 
@@ -152,14 +157,14 @@ Env knobs:
 |----------|--------|
 | `DH_NO_DAEMON=1` | Always in-process |
 | `DH_MOUSE_INSTANT=1` | Warp mouse with no animation |
-| `DH_PRESENCE=1` (default) | Soft ring + “Agent active — hands off” pill while controlling |
+| `DH_PRESENCE=1` (default) | Ice ring + ice frame + **Working · Stop** chip while controlling |
 | `DH_PRESENCE=0` | Disable presence UI |
 | `DH_SAFE=1` (default) | Agent policy defaults |
 | `DH_ALLOW_SENSITIVE=1` | Allow sensitive app names / overrides |
 
-**Presence (default on):** **one** system cursor + soft blue halo while moving; brief **red** halo on click; bottom neon **Agent controlling** bar. No second fake arrow (that caused lag). Off: `DH_PRESENCE=0`.
+**Presence (default on):** **one** system cursor + ice halo while moving; brief **amber** halo on click; ice frame on the driven window; bottom **Working · Stop** chip (click to abort). No second fake arrow. Off: `DH_PRESENCE=0`.
 
-**Observe loop (optional):** for agents *building* visual things — demo → **many** screenshots → look → fix. Not needed for normal control. See `docs/OBSERVE-LOOP.md` / `scripts/observe-demo.sh`.
+**After a visual build:** run it, use it, screenshot, **read the PNG**, fix, at most 3 rounds. See `docs/OBSERVE-LOOP.md`. Not for everyday click/type.
 
 ---
 
@@ -212,7 +217,14 @@ Architecture notes: [DESIGN.md](./DESIGN.md)
 | `mouse_pos` / `move_to` / `wiggle` / `click` / `drag` / `scroll` | Real pointer |
 | `type_text` / `hotkey` / `key` | Keyboard |
 | `screenshot` | Window/display capture |
-| `enable_agent_cursor` | Optional blue ring |
+| `enable_agent_cursor` | Ice halo + frame + Working · Stop chip |
+| `resume_control` | Allow control again after a Stop click |
+| `grab_frame` / `pixel` / `find_color` / `scan_column` | RAM pixels, any window (optional region) |
+| `wait_for` | Poll AX until a control appears |
+| `menu_click` | Exact menu path (`File`, `Save`) |
+| `clipboard_get` / `clipboard_set` | Plain text clipboard |
+| `keys_hold` / `tap` | Hold keys; instant click |
+| `run_loop` | In-process see→act at N Hz (any task) |
 
 ---
 

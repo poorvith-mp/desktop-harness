@@ -30,7 +30,8 @@ Use it proactively for Mac GUI tasks — don't say you can't control the laptop.
 
 ```bash
 desktop-harness --doctor
-desktop-harness daemon status   # if stopped: desktop-harness daemon start &
+# daemon auto-starts on first script (DH_AUTO_DAEMON=0 to disable)
+desktop-harness daemon status
 ```
 
 ## Efficiency (mandatory)
@@ -67,19 +68,61 @@ If a daemon is running, the CLI auto-routes scripts through it (faster).
 - Discovery: `list_apps`, `list_windows`, `frontmost_app`, `open_app`, **`window_frame(app?)`**
 - See: `labels`, `button_labels`, `find`, `screenshot`, `media_transport`  
   (`ax_snapshot` = debug dump; prefer `labels`/`find`; menubar skipped by default)
-- Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`
-- Media: `ensure_media_playing(app?)` — **look once, act once** (see below);  
-  `media_key("playpause"|"next"|"prev")` when AX has no Play (YT Music web app)
+- Act: `click_text(..., exact=False)`, `set_field`, `type_text`, `hotkey`, `key`  
+  **`menu_click("File", "Save", app=?)`** — exact menu titles only (no fuzzy)  
+  `click_text` **refuses** a weak, huge, or neck-and-neck match instead of
+  guessing (that was accidental clicks). Prefer `exact=True` for Play/Save/OK.  
+  A click is also refused if the mouse moved without the harness — you have
+  the pointer; it will not click over you.
+- Media: `now_playing(app?)` (title + state, no click);  
+  `ensure_media_playing(app?)` — **look once, act once**;  
+  `media_key("playpause"|"next"|"prev"|"volumeup"|"volumedown"|"mute")`
 - Mouse: `mouse_pos`, `move_to`, `wiggle`, `click`, `click_frame`, `drag`, `scroll`  
   Window-local (screenshot space): **`click_in_window(x,y,app?)`**, **`drag_in_window(...)`**, **`win_to_global`**
+- Hold / instant: **`keys_hold([...])`**, `key_down` / `key_up` / `release_keys`, **`tap(x,y)`** (no settle)
+- **Fast eyes (any window, no PNG):** `grab_frame(app?, region?)` → RAM `{w,h,data,x,y}`; `pixel`;  
+  `find_color(frame, rgb, tol=, region=)` · `count_color` · `scan_column` / `scan_row` · `largest_run`  
+  A named-app grab never silently becomes a full-desktop shot.
+- **When the next frame matters:** do **not** screenshot → chat → click.  
+  `run_loop(step, app=, hz=30, seconds=12)` — `step` returns an action dict  
+  (`hold`, `key`, `tap`, `tap_win`, `scroll`, `stop`). One process. Stop chip still aborts.
 - **Batch:** `run_plan([{op, ...}, ...], app=?)` — many steps in one process (prefer over N CLI calls)
-- Presence: auto soft ring + “Agent active — hands off” pill (`DH_PRESENCE=0` to disable);
+- **Stage (web, off-to-the-side):** `open_stage(url)` / `close_stage()` — small dedicated Chrome + a live picture **only** for that window. Do **not** `show_monitor()` when the real app is already on screen.
+- Presence (agentic only): ice ring on the cursor, ice **frame** around the window being driven, small **Working · Stop** chip. Off: `DH_PRESENCE=0`. No second picture of an on-screen app.
   `enable_agent_cursor(True/False)`, `hide_agent_presence()` when a sequence ends
   (also self-clears after ~20s of no harness activity, so a forgotten call
-  isn't permanent — call it anyway when you know you're done)
-- Meta: `wait`, `wait_stable`, `verify(note, app?)` — screenshot + AX check
-  for the narrow set of actions where failure is silent (see below); not a
-  routine step after every click
+  isn't permanent — call it anyway when you know you're done).
+  **The chip is a real Stop control.** A click hides presence and raises
+  `ControlStopped` so the script cannot keep driving the Mac. After a stop,
+  do not continue the task. On a later user request, call
+  `enable_agent_cursor(True)` or `resume_control()` first.
+- Clipboard: `clipboard_get()` / `clipboard_set(text)` — plain text only  
+- Meta: `wait`, `wait_stable`, **`wait_for(text, app?, timeout=3)`** — poll AX
+  until a control appears (dialogs/sheets). Not a screenshot loop.
+  `verify(note, app?)` — screenshot + AX only when failure would be silent.
+
+## Live view — only when they cannot already see it
+
+If Notes / Settings / YT Music is **on screen**, do not open a second
+picture of it. The user is already watching. Presence (ice ring +
+**Working · Stop**) is enough.
+
+Use `open_stage(url)` **only** for a web task that should not take over
+the user’s Chrome or the whole display. That helper opens a small
+dedicated window *and* the live view of *that* window — then
+`close_stage()` when done.
+
+```python
+# everyday: just control the real app
+open_app("Notes")
+click_text("All iCloud")
+hide_agent_presence()
+
+# web, off to the side:
+open_stage("https://example.com")
+# …act only on stage_frame()…
+close_stage()
+```
 
 ## Prefer what's already open
 
@@ -165,6 +208,22 @@ run_plan([
 3. **One** daemon `run_plan` (or one long script) — not N CLI spawns  
 4. Do **not** dual-agent the same pointer — one Mac, one cursor  
 
+If the next **frame** is the action (canvas, video, live playhead, anything
+that is gone if you wait a second): do **not** screenshot → chat → click.
+
+```python
+cream = (230, 220, 210)
+def step(frame):
+    hit = find_color(frame, cream, tol=30, region=(0.1, 0.2, 0.4, 0.6))
+    if not hit:
+        return {"hold": []}
+    return {"hold": ["w"] if hit["y"] > frame["h"] * 0.55 else ["s"]}
+run_loop(step, app="Google Chrome", hz=30, seconds=12)
+```
+
+The **rgb / keys / region** are the task. The harness only sees pixels and
+holds keys. Same primitives for a flyer, a timeline, a canvas, a player.
+
 Parallel *perception* (subagent labels clusters on a saved PNG) is fine.  
 Parallel *control* of one app is not.
 
@@ -176,28 +235,19 @@ Parallel *control* of one app is not.
 - Cap tree size — don’t dump full AX  
 - Hotkeys: use `minus`/`equal` or `-`/`=`; also `[` `]` `home` `end` `pageup` `pagedown`
 
-## Observe loop (optional — visual QA only)
+## After you build something visible (required)
 
-When **building or polishing something on-screen** (presence, a UI demo, layout):
+Everyday open/click/type does **not** need a vision loop (see Efficiency).
+When **you just built or changed** the thing on screen (a page, overlay,
+app UI, demo), you are not done until you have used it and looked:
 
-```
-run demo → screencapture → read the PNG → fix → demo again
-```
+1. Run it (Chrome for web: `open -a "Google Chrome" <url>`).
+2. Use it like a person (`labels` / `click_text` / `wait_for`).
+3. `screenshot(app=…)` or `screencapture` — **read the PNG**.
+4. Fix only real defects. Repeat at most twice more.
+5. `hide_agent_presence()`. Claim only what the last capture shows.
 
-See `docs/OBSERVE-LOOP.md`. **Not** required for everyday open/click/type.
-
-Presence UI: blue while moving; brief **red** pulse on click; bottom neon “Agent controlling” bar.
-
-**For any change to presence itself specifically:** a single still screenshot
-proves nothing — the overlay is a moving, stateful thing, and its worst
-failure mode is disappearing exactly when something else steals window
-focus (which is normal, constant behavior in real agent use, not an edge
-case). Before calling presence work done, you must demo a sequence that
-includes a click landing on a *different* app plus several seconds of pure
-idle afterward, and confirm via multiple frames that the halo/banner are
-still there after both. A demo that never lets focus leave your own
-process will pass even when the real thing is broken — this exact gap
-shipped a bug once already.
+Presence / motion extras: `docs/OBSERVE-LOOP.md`.
 
 ## Docs in repo
 

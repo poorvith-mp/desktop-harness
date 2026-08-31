@@ -16,12 +16,33 @@ from typing import Any
 from . import ax as _ax
 from . import capture as _capture
 from . import input as _input
+from . import presence as _presence
 from . import windows as _windows
+
+ControlStopped = _presence.ControlStopped
+PointerTaken = _input.PointerTaken
 
 CORE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CORE_DIR.parent.parent
-AGENT_WORKSPACE = Path(
-    os.environ.get("DH_AGENT_WORKSPACE", REPO_ROOT / "agent-workspace"))
+
+
+def _resolve_agent_workspace() -> Path:
+    """Where optional ``agent_helpers.py`` is loaded from.
+
+    Editable checkout: ``<repo>/agent-workspace``.
+    A wheel in site-packages has no repo next to it — don't invent a
+    path inside site-packages. Fall back to ``~/.desktop-harness/agent-workspace``.
+    """
+    env = os.environ.get("DH_AGENT_WORKSPACE")
+    if env:
+        return Path(env).expanduser()
+    source = REPO_ROOT / "agent-workspace"
+    if source.is_dir():
+        return source
+    return Path.home() / ".desktop-harness" / "agent-workspace"
+
+
+AGENT_WORKSPACE = _resolve_agent_workspace()
 
 
 # --- re-exports ---
@@ -30,27 +51,121 @@ list_apps = _windows.list_apps
 list_windows = _windows.list_windows
 frontmost_app = _windows.frontmost_app
 find_app = _windows.find_app
-activate = _windows.activate
-open_app = _windows.open_app
 window_frame = _windows.window_frame
 win_to_global = _windows.win_to_global
+chip_frame = _presence.chip_frame
+
+
+def _gate() -> None:
+    """Abort if the user clicked Stop on the Working chip."""
+    _presence.assert_running()
+
+
+def resume_control() -> None:
+    """Allow control again after a Stop. Only after the user asked to continue."""
+    _presence.clear_stop()
+
+
+def activate(*args, **kwargs):
+    _gate()
+    out = _windows.activate(*args, **kwargs)
+    name = args[0] if args else kwargs.get("name_or_bundle")
+    # Follow only if the live view is already up — do not pop it just
+    # because we focused Ghostty after a task.
+    try:
+        if name is not None and not isinstance(name, int):
+            if _presence.active() and str(name).lower() not in (
+                "ghostty", "terminal", "iterm2",
+            ):
+                _presence.ring_window(str(name))
+        if _stage.monitor_active() and name is not None and not isinstance(name, int):
+            _stage.follow(str(name))
+            _stage.stage_note(f"open {name}")
+            _stage.refresh_monitor(force=True)
+    except Exception:
+        pass
+    return out
+
+
+def open_app(name: str):
+    return activate(name)
 
 ax_snapshot = _ax.ax_snapshot
 find = _ax.find
 focused_element = _ax.focused_element
 
 screenshot = _capture.screenshot
+grab_frame = _capture.grab_frame
+pixel = _capture.pixel
+frame_digest = _capture.frame_digest
+color_near = _capture.color_near
+find_color = _capture.find_color
+count_color = _capture.count_color
+scan_column = _capture.scan_column
+scan_row = _capture.scan_row
+largest_run = _capture.largest_run
+
+from . import stage as _stage
+
+open_stage = _stage.open_stage
+close_stage = _stage.close_stage
+stage_frame = _stage.stage_frame
+show_monitor = _stage.show_monitor
+hide_monitor = _stage.hide_monitor
+follow = _stage.follow
+stage_note = _stage.stage_note
+refresh_monitor = _stage.refresh_monitor
 
 # Mouse — real system pointer (you can watch it move)
 mouse_pos = _input.mouse_pos
 move_to = _input.move_to
 move_by = _input.move_by
 wiggle = _input.wiggle
+key_down = _input.key_down
+key_up = _input.key_up
+keys_hold = _input.keys_hold
+release_keys = _input.release_keys
+held_keys = _input.held_keys
+tap = _input.tap
+mouse_down = _input.mouse_down
+mouse_up = _input.mouse_up
+
+from . import reflex as _reflex
+
+run_loop = _reflex.run_loop
+apply = _reflex.apply
+
+
+def _watch(note: str | None = None, app: str | int | None = None) -> None:
+    """Refresh the live view only if it is already open (Stage).
+
+    Everyday control of an on-screen app does not pop a second picture
+    of that app — the user can already see it.
+    """
+    try:
+        if app is not None and not isinstance(app, int):
+            if _presence.active() and str(app).lower() not in (
+                "ghostty", "terminal", "iterm2",
+            ):
+                _presence.ring_window(str(app))
+        if not _stage.monitor_active():
+            return
+        if note:
+            _stage.stage_note(note)
+        if app is not None and not isinstance(app, int):
+            _stage.follow(str(app))
+        _stage.refresh_monitor(force=False)
+    except Exception:
+        pass
+
+
 def click(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
     _safety.audit("click", {"args": args[:2]})
-    return _input.click(*args, **kwargs)
+    out = _input.click(*args, **kwargs)
+    _watch("click")
+    return out
 
 
 def right_click(*args, **kwargs):
@@ -125,37 +240,78 @@ def hotkey(*args, **kwargs):
 
 
 def media_key(name: str = "playpause", **kwargs):
-    """System media key (playpause/next/prev). Fallback when AX has no Play."""
+    """System media key (playpause/next/prev/volumeup/volumedown/mute)."""
     from . import safety as _safety
-    _safety.check_frontmost_allowed()
+    # Volume/mute are not app-targeted; still audit. Transport keys need
+    # the frontmost gate so we don't poke a password manager.
+    if name.lower() not in ("volumeup", "volup", "volumedown", "voldown", "mute"):
+        _safety.check_frontmost_allowed()
     _safety.audit("media_key", {"name": name})
     return _input.media_key(name, **kwargs)
+
+
+def now_playing(app: str | int | None = None) -> dict[str, Any]:
+    """Cheap now-playing snapshot: window title + AX transport state.
+
+    Prefer an already-open player (YT Music, Music, Spotify). Does not click.
+    """
+    target = app
+    if target is None:
+        names = ("YT Music", "YouTube Music", "Music", "Spotify", "YouTube")
+        running = {a.get("name"): a for a in list_apps()}
+        for n in names:
+            if n in running:
+                target = n
+                break
+        if target is None:
+            front = frontmost_app()
+            target = (front or {}).get("name")
+    info: dict[str, Any] = {"app": target}
+    try:
+        fr = window_frame(target)
+        info["title"] = fr.get("title") or ""
+        info["window"] = {k: fr[k] for k in ("x", "y", "w", "h") if k in fr}
+    except Exception as e:
+        info["title_error"] = str(e)
+    try:
+        st = media_transport(target)
+        info["state"] = st.get("state")
+        info["pause"] = st.get("pause")
+        info["play"] = st.get("play")
+        info["labels"] = (st.get("labels") or [])[:12]
+    except Exception as e:
+        info["transport_error"] = str(e)
+    return info
 
 
 def type_text(*args, **kwargs):
     from . import safety as _safety
     _safety.check_frontmost_allowed()
     _safety.audit("type_text", {"n": len(args[0]) if args else 0})
-    return _input.type_text(*args, **kwargs)
+    out = _input.type_text(*args, **kwargs)
+    _watch("type")
+    return out
 
 
 def enable_agent_cursor(enabled: bool = True):
-    """Show / hide agent presence (synced halo + bottom neon bar).
+    """Show / hide agent presence (ice halo + Working · Stop chip).
 
     Design: ONE real system cursor + soft glow halo (never a second arrow).
-    Blue while moving; brief red flash on click. DH_PRESENCE=0 to disable.
+    Ice while moving; brief amber flash on click. DH_PRESENCE=0 to disable.
+    Click the bottom chip to stop the agent immediately.
     """
     try:
-        from . import presence
         if not enabled:
-            presence.hide()
+            _presence.hide()
             _input.set_overlay(None)
             return False
+        # Explicit new control session — user asked the agent to work again.
+        _presence.clear_stop()
         p = mouse_pos()
-        ok = presence.show(p["x"], p["y"])
+        ok = _presence.show(p["x"], p["y"])
         if ok:
             # Overlay uses presence.move(x,y) on every warp — same coords as cursor
-            _input.set_overlay(presence)
+            _input.set_overlay(_presence)
         return ok
     except Exception as e:
         print(f"agent presence unavailable: {e}")
@@ -163,7 +319,7 @@ def enable_agent_cursor(enabled: bool = True):
 
 
 def hide_agent_presence():
-    """Hide ring + banner when a control sequence is finished.
+    """Hide ring, banner, and live monitor when a control sequence is finished.
 
     Call this when you know you're done — it's still the fast, immediate
     path. If a script forgets (crash, early return, the chat turn just
@@ -171,29 +327,159 @@ def hide_agent_presence():
     no harness activity (see daemon.py's idle loop / DH_PRESENCE_IDLE_HIDE)
     so a missed call doesn't leave the overlay on screen indefinitely."""
     try:
-        from . import presence
-        presence.hide()
+        _input.release_keys()
+    except Exception:
+        pass
+    try:
+        _presence.hide()
+    except Exception:
+        pass
+    try:
+        _stage.hide_monitor()
     except Exception:
         pass
     _input.set_overlay(None)
 
 
+def keep_alive(seconds: float) -> None:
+    """Presence-safe wait. Same as wait(); exported so scripts can call it by name."""
+    wait(seconds)
+
+
 def wait(seconds: float = 0.4):
     """Pause — presence-safe: keeps the agent-presence overlay from
     sinking behind other windows during the wait, instead of a raw sleep
-    that leaves it unattended. Prefer this over time.sleep() in scripts."""
-    try:
-        from . import presence
-        presence.keep_alive(seconds)
-        return
-    except Exception:
-        pass
-    time.sleep(seconds)
+    that leaves it unattended. Prefer this over time.sleep() in scripts.
+
+    Honors a Stop click on the Working chip (raises ControlStopped).
+    """
+    _presence.keep_alive(seconds)
 
 
 def wait_stable(seconds: float = 0.2):
     """Short settle after an action (presence-safe; keep small for speed)."""
     wait(seconds)
+
+
+def wait_for(
+    text: str,
+    app: str | int | None = None,
+    *,
+    role: str | None = None,
+    exact: bool = False,
+    timeout: float = 3.0,
+    interval: float = 0.12,
+) -> dict[str, Any]:
+    """Poll AX ``find`` until a match appears, or raise TimeoutError.
+
+    Use this instead of a blind ``wait(0.5)`` after a click that should
+    open a sheet, menu, or dialog. Same eyes as everyday control — no
+    screenshot loop.
+    """
+    deadline = time.monotonic() + max(0.05, float(timeout))
+    last: list[dict[str, Any]] = []
+    q = text.strip().lower()
+    while time.monotonic() < deadline:
+        _gate()
+        last = _ax.find(text, app=app, role=role, max_results=6, include_el=False)
+        if exact:
+            last = [
+                h for h in last
+                if (h.get("title") or "").strip().lower() == q
+                or (h.get("label") or "").strip().lower() == q
+            ]
+        if last:
+            return last[0]
+        wait(interval)
+    raise TimeoutError(
+        f"wait_for {text!r} timed out after {timeout}s "
+        f"(role={role!r}, exact={exact})"
+    )
+
+
+def menu_click(*path: str, app: str | int | None = None) -> dict[str, Any]:
+    """Press a menu item by exact titles: ``menu_click("File", "Save")``.
+
+    Walks the AX menu bar. Each segment must match a title/label exactly
+    (case-insensitive). No substring guessing — that clicks the wrong item.
+    """
+    from . import safety as _safety
+    _gate()
+    _safety.check_frontmost_allowed()
+    if app:
+        _safety.check_app_allowed(str(app))
+    parts = [str(p).strip() for p in path if str(p).strip()]
+    if not parts:
+        raise ValueError("menu_click needs at least one title, e.g. File, Save")
+    _safety.audit("menu_click", {"path": parts, "app": app})
+
+    root, _pid = _ax.app_element(app)
+    bar = _ax._copy(root, "AXMenuBar")
+    if bar is None:
+        raise RuntimeError(f"no menu bar for app {app!r}")
+
+    current = bar
+    target = None
+    for i, name in enumerate(parts):
+        q = name.lower()
+        kids = _ax._children(current)
+        match = None
+        for kid in kids:
+            title = _ax._str_attr(kid, "AXTitle")
+            desc = _ax._str_attr(kid, "AXDescription")
+            if title.lower() == q or desc.lower() == q:
+                match = kid
+                break
+        if match is None:
+            available = [
+                _ax._str_attr(k, "AXTitle") or _ax._str_attr(k, "AXDescription")
+                for k in kids
+            ]
+            available = [a for a in available if a][:20]
+            raise RuntimeError(
+                f"no exact menu match for {name!r} in {parts!r}. "
+                f"visible: {available}"
+            )
+        if i == len(parts) - 1:
+            target = match
+            break
+        menus = [
+            k for k in _ax._children(match)
+            if _ax._str_attr(k, "AXRole") == "AXMenu"
+        ]
+        if not menus:
+            _ax.press_element(match)
+            wait_stable(0.08)
+            menus = [
+                k for k in _ax._children(match)
+                if _ax._str_attr(k, "AXRole") == "AXMenu"
+            ]
+        current = menus[0] if menus else match
+
+    if target is None or not _ax.press_element(target):
+        raise RuntimeError(f"could not press menu {parts!r}")
+    wait_stable()
+    return {"ok": True, "path": parts, "app": app}
+
+
+def clipboard_get() -> str:
+    """Plain text from the Mac clipboard. Empty string if none."""
+    from AppKit import NSPasteboard, NSPasteboardTypeString
+    pb = NSPasteboard.generalPasteboard()
+    val = pb.stringForType_(NSPasteboardTypeString)
+    return str(val) if val else ""
+
+
+def clipboard_set(text: str) -> None:
+    """Put plain text on the Mac clipboard."""
+    from AppKit import NSPasteboard, NSPasteboardTypeString
+    from . import safety as _safety
+    _gate()
+    _safety.audit("clipboard_set", {"n": len(text)})
+    pb = NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    if not pb.setString_forType_(str(text), NSPasteboardTypeString):
+        raise RuntimeError("clipboard_set failed")
 
 
 def ensure_daemon() -> bool:
@@ -250,12 +536,28 @@ def run_plan(
         return frame
 
     for i, raw in enumerate(steps):
+        _gate()
         step = dict(raw or {})
         op = (step.get("op") or step.get("action") or "").strip().lower()
         entry: dict[str, Any] = {"i": i, "op": op, "ok": False}
         try:
             if op in ("open_app", "open"):
                 entry["result"] = open_app(step["name"])
+            elif op == "open_stage":
+                entry["result"] = open_stage(step.get("url"))
+            elif op == "close_stage":
+                entry["result"] = close_stage()
+            elif op == "show_monitor":
+                entry["result"] = show_monitor()
+            elif op == "hide_monitor":
+                hide_monitor()
+                entry["result"] = True
+            elif op == "stage_note":
+                entry["result"] = stage_note(step.get("text") or step.get("note") or "")
+            elif op == "follow":
+                entry["result"] = follow(
+                    step.get("app"), window_id=step.get("window_id")
+                )
             elif op == "click":
                 if "wx" in step or "wy" in step:
                     fr = _frame_for(step.get("app"))
@@ -315,6 +617,24 @@ def run_plan(
                 entry["result"] = True
             elif op == "window_frame":
                 entry["result"] = window_frame(step.get("app", plan_app))
+            elif op == "menu_click":
+                p = step.get("path") or step.get("items") or []
+                if isinstance(p, str):
+                    p = [p]
+                entry["result"] = menu_click(*p, app=step.get("app", plan_app))
+            elif op == "wait_for":
+                entry["result"] = wait_for(
+                    step.get("text") or step.get("name") or "",
+                    app=step.get("app", plan_app),
+                    role=step.get("role"),
+                    exact=bool(step.get("exact", False)),
+                    timeout=float(step.get("timeout", 3.0)),
+                )
+            elif op == "clipboard_get":
+                entry["result"] = clipboard_get()
+            elif op == "clipboard_set":
+                clipboard_set(step.get("text") or "")
+                entry["result"] = True
             else:
                 raise ValueError(f"unknown plan op: {op!r}")
             entry["ok"] = True
@@ -423,6 +743,7 @@ def ensure_media_playing(app: str | int | None = None) -> dict[str, Any]:
     Never spam Space. Never multi-retry in one call.
     """
     from . import safety as _safety
+    _gate()
     nodes = ax_snapshot(app, max_nodes=400, interactive_only=True, include_el=True)
     status = _media_state_from_nodes(nodes)
     play_el = status.pop("_play_el", None)
@@ -493,6 +814,7 @@ def click_text(
     Prefer role=\"AXButton\" for toolbar/player controls.
     """
     from . import safety as _safety
+    _gate()
     _safety.check_frontmost_allowed()
     if app:
         _safety.check_app_allowed(str(app))
@@ -512,15 +834,22 @@ def click_text(
         labels = [n.get("label") or n.get("title") or n.get("role") for n in sample[:25]]
         raise RuntimeError(
             f"no AX match for {text!r} (role={role!r}, exact={exact}). visible sample: {labels}")
-    hit = hits[0]
+    hit = _pick_click_hit(hits, text)
     el = hit.get("_el")
-    if prefer_ax_press and el is not None:
+    role_name = hit.get("role") or ""
+    if prefer_ax_press and el is not None and _ax_pressable(role_name):
         if _ax.press_element(el):
             wait_stable()
             return {k: v for k, v in hit.items() if not k.startswith("_")}
     frame = hit.get("frame")
     if not frame:
         raise RuntimeError(f"matched {text!r} but no frame and AXPress failed: {hit}")
+    if not _frame_is_click_target(hit):
+        raise RuntimeError(
+            f"refusing to click {text!r}: match is {role_name} "
+            f"{int(frame.get('w', 0))}×{int(frame.get('h', 0))} — "
+            f"too large / not a control. Name a button or pass exact=True."
+        )
     # ensure app frontmost for coordinate click
     if app is not None:
         try:
@@ -539,6 +868,72 @@ def click_text(
     return {k: v for k, v in hit.items() if not k.startswith("_")}
 
 
+_PRESSABLE = frozenset({
+    "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton",
+    "AXMenuButton", "AXMenuItem", "AXLink", "AXTab",
+    "AXDisclosureTriangle", "AXComboBox", "AXMenuBarItem",
+})
+_CONTAINERS = frozenset({
+    "AXWindow", "AXGroup", "AXScrollArea", "AXSplitGroup",
+    "AXList", "AXOutline", "AXTable", "AXLayoutArea",
+    "AXBrowser", "AXWebArea", "AXSheet", "AXDialog",
+})
+_MIN_CLICK_SCORE = 60
+
+
+def _ax_pressable(role: str) -> bool:
+    return role in _PRESSABLE
+
+
+def _frame_is_click_target(hit: dict[str, Any]) -> bool:
+    """True only if a coordinate click on this hit is a real control.
+
+    Clicking the center of a window / group / web area is the usual
+    accidental click. Buttons may be wide; containers may not.
+    """
+    role = hit.get("role") or ""
+    fr = hit.get("frame") or {}
+    w = float(fr.get("w") or 0)
+    h = float(fr.get("h") or 0)
+    if w <= 0 or h <= 0:
+        return False
+    if role in _PRESSABLE:
+        return True
+    if role in _CONTAINERS:
+        return False
+    # Labels / unknown: only if they look like a control, not a paragraph.
+    return w * h <= 24000 and w <= 420 and h <= 120
+
+
+def _pick_click_hit(hits: list[dict[str, Any]], text: str) -> dict[str, Any]:
+    """Fail closed: weak or neck-and-neck matches are not clicked."""
+    confident = [h for h in hits if float(h.get("score") or 0) >= _MIN_CLICK_SCORE]
+    pool = confident or hits
+    hit = pool[0]
+    if float(hit.get("score") or 0) < _MIN_CLICK_SCORE:
+        names = [
+            (h.get("label") or h.get("title") or h.get("role"), h.get("score"))
+            for h in hits[:4]
+        ]
+        raise RuntimeError(
+            f"refusing to click {text!r}: no confident match {names}. "
+            f"Be more specific or pass exact=True."
+        )
+    if len(pool) >= 2:
+        s0 = float(pool[0].get("score") or 0)
+        s1 = float(pool[1].get("score") or 0)
+        if s0 - s1 < 12:
+            a = pool[0].get("label") or pool[0].get("title")
+            b = pool[1].get("label") or pool[1].get("title")
+            if (a or "").strip().lower() != (b or "").strip().lower():
+                raise RuntimeError(
+                    f"refusing to click {text!r}: ambiguous "
+                    f"{a!r} ({s0:.0f}) vs {b!r} ({s1:.0f}). "
+                    f"Pass exact=True or a longer name."
+                )
+    return hit
+
+
 def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, Any]:
     """Find a text field by nearby label/title and set its value."""
     from . import safety as _safety
@@ -546,6 +941,7 @@ def set_field(text: str, value: str, app: str | int | None = None) -> dict[str, 
     # into a focused field with no check and no audit row, while the slower
     # click+type fallback underneath it was gated — so the fast path was the
     # unguarded one.
+    _gate()
     _safety.check_frontmost_allowed()
     if app:
         _safety.check_app_allowed(str(app))
